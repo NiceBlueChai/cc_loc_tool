@@ -1,0 +1,33 @@
+# .gitattributes for a cross-platform Rust project
+# Ensures consistent line endings and prevents cross-platform issues
+
+# Normalize all text files to LF in the repo
+* text=auto
+
+# Ensure Rust source files always use LF (Unix-style) line endings
+*.rs text eol=lf
+
+# Ensure common config files use LF
+*.toml text eol=lf
+*.lock text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+
+# Windows batch scripts use CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell scripts use LF
+*.sh text eol=lf
+
+# Prevent changing line endings for binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
