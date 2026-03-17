@@ -1013,14 +1013,14 @@ impl Render for LocToolView {
             .child(self.render_error(window, cx))
             // 可滚动的主内容区域
             .child(
-                div()
+                v_flex()
                     .flex_1() // 占据剩余空间
                     .min_h_0() // 确保容器可以收缩
-                    .scrollable(ScrollbarAxis::Vertical) // 使用框架提供的滚动方法
+                    .scrollable(ScrollbarAxis::Vertical) // 使用gpui-component的Scrollable组件
                     .child(
                         v_flex()
                             .p_4()
-                            .pb_20() // 增加底部padding，确保最后一行可见
+                            .pb_64() // 大幅增加底部padding，确保所有内容都能完全显示
                             .when(has_results, |this|
                                 this.child(self.render_summary(window, cx))
                                     .child(self.render_results(window, cx))
