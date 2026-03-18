@@ -1,21 +1,108 @@
 use gpui::{
-    div, prelude::*, px, Context, Entity, IntoElement, ParentElement, Render, Styled, Window,
+    Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, prelude::*, px,
 };
 use gpui_component::{
+    Disableable,
     button::{Button, ButtonVariants},
     h_flex,
     input::{Input, InputState},
-    scroll::ScrollbarAxis,
+    scroll::ScrollableElement,
     theme::ActiveTheme,
-    v_flex, Disableable, StyledExt,
+    v_flex,
+    Root,
 };
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use crate::config::AppConfig;
-use crate::export::{export_results, ExportFormat};
-use crate::loc::{scan_directory, FileLoc, LocSummary, Language};
+use crate::export::{ExportFormat, export_results};
+use crate::loc::{FileLoc, Language, LocSummary, scan_directory};
 
 use super::state::{ScanProgress, ScanState, SortColumn, SortOrder, Theme};
+
+/// 文件预览窗口视图
+pub struct FilePreviewView {
+    file_path: PathBuf,
+    editor: Entity<InputState>,
+}
+
+impl FilePreviewView {
+    pub fn new(file_path: &PathBuf, content: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // 根据文件扩展名确定语言类型
+        let language = Self::detect_language(file_path);
+        
+        // 创建代码编辑器状态
+        let editor = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor(&language)
+                .line_number(true)
+                .default_value(content.to_string())
+        });
+        
+        Self {
+            file_path: file_path.clone(),
+            editor,
+        }
+    }
+    
+    /// 根据文件扩展名检测语言类型
+    fn detect_language(path: &PathBuf) -> String {
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some("c") => "c",
+            Some("cpp") | Some("cc") | Some("cxx") | Some("hpp") | Some("h") => "cpp",
+            Some("rs") => "rust",
+            Some("py") => "python",
+            Some("java") => "java",
+            Some("go") => "go",
+            Some("js") => "javascript",
+            Some("ts") => "typescript",
+            Some("json") => "json",
+            Some("html") => "html",
+            Some("css") => "css",
+            Some("md") => "markdown",
+            Some("toml") => "toml",
+            Some("yaml") | Some("yml") => "yaml",
+            Some("sh") | Some("bash") => "bash",
+            _ => "text",
+        }.to_string()
+    }
+}
+
+impl Render for FilePreviewView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let filename = self
+            .file_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        v_flex()
+            .size_full()
+            .bg(theme.background)
+            .text_color(theme.foreground)
+            .child(
+                // 窗口标题栏
+                div()
+                    .p_4()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .bg(theme.muted)
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .child(div().font_weight(gpui::FontWeight::BOLD).child(filename)),
+                    ),
+            )
+            .child(
+                // 代码编辑器显示区域
+                div()
+                    .flex_1()
+                    .p_2()
+                    .child(Input::new(&self.editor).h_full()),
+            )
+    }
+}
 
 pub struct LocToolView {
     selected_path: Option<PathBuf>,
@@ -60,13 +147,16 @@ impl LocToolView {
 
         // 先获取theme值，避免移动config后无法访问
         let theme = config.theme;
-        
+
         Self {
             selected_path: config.last_selected_path.clone(),
             exclude_input,
             exclude_files_input,
             scan_state: ScanState::Idle,
-            scan_progress: ScanProgress { total_files: 0, processed_files: 0 },
+            scan_progress: ScanProgress {
+                total_files: 0,
+                processed_files: 0,
+            },
             results: Vec::new(),
             summary: LocSummary::default(),
             error_message: None,
@@ -119,7 +209,10 @@ impl LocToolView {
         self.error_message = None;
         self.results.clear();
         self.summary = LocSummary::default();
-        self.scan_progress = ScanProgress { total_files: 0, processed_files: 0 };
+        self.scan_progress = ScanProgress {
+            total_files: 0,
+            processed_files: 0,
+        };
         cx.notify();
 
         let path = Arc::new(path);
@@ -141,12 +234,12 @@ impl LocToolView {
             .filter(|s| !s.is_empty())
             .collect();
         let exclude_files_arc = Arc::new(exclude_files.clone());
-        
+
         // 更新配置
         self.config.exclude_dirs = exclude_dirs;
         self.config.exclude_files = exclude_files;
         self.config.set_selected_languages(&self.selected_languages);
-        
+
         // 保存配置
         if let Err(e) = self.config.save() {
             eprintln!("保存配置失败: {}", e);
@@ -160,10 +253,10 @@ impl LocToolView {
             let exclude_dirs_clone = exclude_dirs_arc.clone();
             let exclude_files_clone = exclude_files_arc.clone();
             let selected_languages_clone = selected_languages.clone();
-            
+
             // 创建一个通道来传递进度信息
-            let (progress_sender, progress_receiver) = std::sync::mpsc::channel();
-            
+            let (progress_sender, _progress_receiver) = std::sync::mpsc::channel();
+
             // 在后台执行扫描
             let result = cx
                 .background_spawn(async move {
@@ -175,11 +268,11 @@ impl LocToolView {
                         Some(&|processed, total| {
                             // 发送进度信息
                             let _ = progress_sender.send((processed, total));
-                        })
+                        }),
                     )
                 })
                 .await;
-            
+
             // 处理进度信息 - 简化实现，避免复杂的线程间通信
             // 注意：由于gpui框架的限制，我们将在扫描完成后更新进度
             // 完整的进度更新需要更复杂的框架集成
@@ -230,7 +323,7 @@ impl LocToolView {
                             ExportFormat::Csv
                         }
                     };
-                    
+
                     // 执行导出
                     match export_results(&path, format, &summary, &files) {
                         Ok(_) => {
@@ -313,7 +406,11 @@ impl LocToolView {
                             .label("扫描")
                             .primary()
                             .loading(is_scanning)
-                            .disabled(is_scanning || self.selected_path.is_none() || self.selected_languages.is_empty())
+                            .disabled(
+                                is_scanning
+                                    || self.selected_path.is_none()
+                                    || self.selected_languages.is_empty(),
+                            )
                             .on_click(cx.listener(|view, _, window, cx| {
                                 view.scan(window, cx);
                             })),
@@ -350,7 +447,11 @@ impl LocToolView {
                                 // 全选按钮
                                 Button::new("select-all")
                                     .label("全选")
-                                    .disabled(is_scanning || self.selected_languages.len() == Language::all().len())
+                                    .disabled(
+                                        is_scanning
+                                            || self.selected_languages.len()
+                                                == Language::all().len(),
+                                    )
                                     .on_click(cx.listener(|view, _, _window, cx| {
                                         view.selected_languages = Language::all().to_vec();
                                         cx.notify();
@@ -378,18 +479,18 @@ impl LocToolView {
                                     Language::Go => "lang-go",
                                     Language::Rust => "lang-rust",
                                 };
-                                
+
                                 let button = Button::new(button_id)
                                     .label(language.display_name())
                                     .disabled(is_scanning);
-                                
+
                                 // 根据选择状态设置是否为主要按钮
                                 let button = if is_selected {
                                     button.primary()
                                 } else {
                                     button
                                 };
-                                
+
                                 button.on_click(cx.listener(move |view, _, _window, cx| {
                                     view.toggle_language(language, cx);
                                 }))
@@ -424,11 +525,7 @@ impl LocToolView {
                             .min_w(px(80.0))
                             .child("排除文件"),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&self.exclude_files_input)),
-                    )
+                    .child(div().flex_1().child(Input::new(&self.exclude_files_input)))
                     .child(
                         div()
                             .text_xs()
@@ -452,7 +549,12 @@ impl LocToolView {
                     .flex_wrap()
                     .child(self.render_stat_card("文件数", self.summary.files, theme.info, cx))
                     .child(self.render_stat_card("代码行", self.summary.code, theme.success, cx))
-                    .child(self.render_stat_card("注释行", self.summary.comments, theme.warning, cx))
+                    .child(self.render_stat_card(
+                        "注释行",
+                        self.summary.comments,
+                        theme.warning,
+                        cx,
+                    ))
                     .child(self.render_stat_card(
                         "空白行",
                         self.summary.blanks,
@@ -472,7 +574,7 @@ impl LocToolView {
                         ),
                     ),
             );
-        
+
         // 只有当有数据时才添加统计图表
         if self.summary.total() > 0 {
             content.child(
@@ -525,7 +627,7 @@ impl LocToolView {
     fn render_chart(&self, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let total = self.summary.total() as f64;
-        
+
         if total == 0.0 {
             return div().child("无数据可显示");
         }
@@ -599,12 +701,10 @@ impl LocToolView {
                                     .rounded(px(2.0))
                                     .bg(theme.success),
                             )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.foreground)
-                                    .child(format!("代码行: {} ({:.1}%)", self.summary.code, code_percent)),
-                            )
+                            .child(div().text_sm().text_color(theme.foreground).child(format!(
+                                "代码行: {} ({:.1}%)",
+                                self.summary.code, code_percent
+                            ))),
                     )
                     // 注释行图例
                     .child(
@@ -618,12 +718,10 @@ impl LocToolView {
                                     .rounded(px(2.0))
                                     .bg(theme.warning),
                             )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.foreground)
-                                    .child(format!("注释行: {} ({:.1}%)", self.summary.comments, comments_percent)),
-                            )
+                            .child(div().text_sm().text_color(theme.foreground).child(format!(
+                                "注释行: {} ({:.1}%)",
+                                self.summary.comments, comments_percent
+                            ))),
                     )
                     // 空白行图例
                     .child(
@@ -637,12 +735,10 @@ impl LocToolView {
                                     .rounded(px(2.0))
                                     .bg(theme.muted_foreground),
                             )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.foreground)
-                                    .child(format!("空白行: {} ({:.1}%)", self.summary.blanks, blanks_percent)),
-                            )
+                            .child(div().text_sm().text_color(theme.foreground).child(format!(
+                                "空白行: {} ({:.1}%)",
+                                self.summary.blanks, blanks_percent
+                            ))),
                     ),
             )
     }
@@ -668,13 +764,13 @@ impl LocToolView {
             Theme::Light => Theme::Dark,
             Theme::Dark => Theme::Light,
         };
-        
+
         // 更新配置
         self.config.theme = self.theme;
         if let Err(e) = self.config.save() {
             eprintln!("保存主题配置失败: {}", e);
         }
-        
+
         // 重新渲染UI，使主题更改生效
         cx.notify();
     }
@@ -813,31 +909,23 @@ impl LocToolView {
                         Some(px(80.0)),
                         cx,
                     ))
-                    .child(self.render_header_cell(
-                        "空白",
-                        SortColumn::Blanks,
-                        Some(px(80.0)),
-                        cx,
-                    ))
-                    .child(self.render_header_cell(
-                        "总计",
-                        SortColumn::Total,
-                        Some(px(80.0)),
-                        cx,
-                    )),
+                    .child(self.render_header_cell("空白", SortColumn::Blanks, Some(px(80.0)), cx))
+                    .child(self.render_header_cell("总计", SortColumn::Total, Some(px(80.0)), cx)),
             )
             .child(
                 div()
                     .border_1()
                     .border_color(theme.border)
                     .rounded_b(theme.radius)
-                    .child(v_flex().children(self.results.iter().enumerate().map(
-                        |(i, file)| {
+                    .child(
+                        v_flex().children(self.results.iter().enumerate().map(|(i, file)| {
                             let bg = if i % 2 == 0 {
                                 theme.background
                             } else {
                                 theme.muted.opacity(0.3)
                             };
+                            // 不再需要选中状态，因为改为新窗口显示预览
+                            let is_selected = false;
 
                             let path_str = file
                                 .path
@@ -848,13 +936,30 @@ impl LocToolView {
                                 .to_string_lossy()
                                 .to_string();
 
-                            h_flex()
+                            let mut row = h_flex()
                                 .gap_2()
                                 .p_2()
-                                .bg(bg)
                                 .border_b_1()
                                 .border_color(theme.border)
-                                .child(div().flex_1().text_sm().overflow_x_hidden().child(path_str))
+                                .cursor_pointer();
+
+                            // 添加点击事件
+                            let file_path = file.path.clone();
+                            row = row.on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |view, _, _window, cx| {
+                                    view.load_file_content(&file_path, cx);
+                                }),
+                            );
+
+                            // 根据选择状态设置不同的背景和边框
+                            if is_selected {
+                                row = row.bg(theme.primary.opacity(0.2));
+                            } else {
+                                row = row.bg(bg);
+                            }
+
+                            row.child(div().flex_1().text_sm().overflow_x_hidden().child(path_str))
                                 .child(
                                     div()
                                         .w(px(80.0))
@@ -883,8 +988,8 @@ impl LocToolView {
                                         .text_center()
                                         .child(format!("{}", file.total())),
                                 )
-                        },
-                    ))),
+                        })),
+                    ),
             )
     }
 
@@ -909,28 +1014,29 @@ impl LocToolView {
     fn render_empty_state(&self, _window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
-        div()
-            .flex_1()
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                v_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(div().text_xl().text_color(theme.muted_foreground).child("📂"))
-                    .child(
-                        div()
-                            .text_color(theme.muted_foreground)
-                            .child("选择一个项目目录开始扫描"),
-                    ),
-            )
+        div().flex_1().flex().items_center().justify_center().child(
+            v_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .text_xl()
+                        .text_color(theme.muted_foreground)
+                        .child("📂"),
+                )
+                .child(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child("选择一个项目目录开始扫描"),
+                ),
+        )
     }
 
     fn render_progress(&self, _window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let progress = if self.scan_progress.total_files > 0 {
-            (self.scan_progress.processed_files as f32 / self.scan_progress.total_files as f32) * 100.0
+            (self.scan_progress.processed_files as f32 / self.scan_progress.total_files as f32)
+                * 100.0
         } else {
             0.0
         };
@@ -968,7 +1074,10 @@ impl LocToolView {
                         div()
                             .text_sm()
                             .text_color(theme.muted_foreground)
-                            .child(format!("{}/{} 文件", self.scan_progress.processed_files, self.scan_progress.total_files)),
+                            .child(format!(
+                                "{}/{} 文件",
+                                self.scan_progress.processed_files, self.scan_progress.total_files
+                            )),
                     ),
             )
     }
@@ -981,8 +1090,68 @@ impl LocToolView {
             // 如果未选中，则添加选择
             self.selected_languages.push(language);
         }
+        // 保存配置
+        self.config.set_selected_languages(&self.selected_languages);
+        if let Err(e) = self.config.save() {
+            eprintln!("保存语言配置失败: {}", e);
+        }
         cx.notify();
     }
+
+    /// 加载文件内容用于预览
+    fn load_file_content(&mut self, file_path: &PathBuf, cx: &mut Context<Self>) {
+        // 克隆文件路径以便在异步任务中使用
+        let file_path_clone = file_path.clone();
+
+        cx.spawn(async move |this, cx| {
+            // 在后台加载文件内容
+            let result = std::fs::read_to_string(&file_path_clone);
+
+            cx.update(|cx| {
+                match result {
+                    Ok(content) => {
+                        // 创建一个新窗口来显示文件预览
+                        // 配置新窗口的大小和位置
+                        let bounds = gpui::Bounds::centered(
+                            None,
+                            gpui::size(gpui::px(800.0), gpui::px(600.0)),
+                            cx,
+                        );
+
+                        let _ = cx.open_window(
+                            gpui::WindowOptions {
+                                window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
+                                ..Default::default()
+                            },
+                            |window, cx| {
+                                // 创建文件预览视图并用Root包装
+                                let view = cx.new(|cx| {
+                                    FilePreviewView::new(&file_path_clone, &content, window, cx)
+                                });
+                                cx.new(|cx| Root::new(view, window, cx))
+                            },
+                        );
+                    }
+                    Err(e) => {
+                        // 如果文件读取失败，显示错误信息
+                        let _ = this.update(cx, |view, cx| {
+                            view.error_message = Some(format!("无法读取文件: {}", e));
+                            cx.notify();
+                        });
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+}
+
+impl LocToolView {
+    // 处理键盘快捷键（暂时注释，等待修复gpui API调用问题）
+    /*fn handle_keyboard(&mut self, event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // 等待修复gpui API调用问题后再实现
+    }*/
 }
 
 impl Render for LocToolView {
@@ -990,7 +1159,7 @@ impl Render for LocToolView {
         let has_results = !self.results.is_empty();
         let is_scanning = self.scan_state == ScanState::Scanning;
         let theme = cx.theme();
-        
+
         // 根据当前主题设置不同的颜色
         let (bg_color, text_color) = match self.theme {
             Theme::Light => (
@@ -998,12 +1167,12 @@ impl Render for LocToolView {
                 theme.foreground, // 深色文字
             ),
             Theme::Dark => (
-                theme.primary, // 使用深色背景（暂时用primary颜色代替）
+                theme.primary,    // 使用深色背景（暂时用primary颜色代替）
                 theme.background, // 使用背景色作为文字颜色
             ),
         };
 
-        // 回到使用gpui框架的scrollable方法
+        // 使用gpui-component的Scrollable组件
         v_flex()
             .size_full()
             .bg(bg_color)
@@ -1014,24 +1183,25 @@ impl Render for LocToolView {
             // 可滚动的主内容区域
             .child(
                 v_flex()
+                    .id("main-content-scroll")
                     .flex_1() // 占据剩余空间
                     .min_h_0() // 确保容器可以收缩
-                    .scrollable(ScrollbarAxis::Vertical) // 使用gpui-component的Scrollable组件
+                    .overflow_y_scrollbar() // 使用新版本API
                     .child(
                         v_flex()
                             .p_4()
                             .pb_64() // 大幅增加底部padding，确保所有内容都能完全显示
-                            .when(has_results, |this|
+                            .when(has_results, |this| {
                                 this.child(self.render_summary(window, cx))
                                     .child(self.render_results(window, cx))
-                            )
-                            .when(is_scanning, |this|
+                            })
+                            .when(is_scanning, |this| {
                                 this.child(self.render_progress(window, cx))
-                            )
-                            .when(!has_results && !is_scanning, |this|
+                            })
+                            .when(!has_results && !is_scanning, |this| {
                                 this.child(self.render_empty_state(window, cx))
-                            )
-                    )
+                            }),
+                    ),
             )
     }
 }

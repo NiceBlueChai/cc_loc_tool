@@ -4,9 +4,9 @@ mod export;
 mod loc;
 mod ui;
 
-use gpui::{prelude::*, px, size, App, Application, Bounds, WindowBounds, WindowOptions};
-use gpui_component::init;
+use gpui::{App, Application, Bounds, WindowBounds, WindowOptions, prelude::*, px, size};
 use gpui_component::Root;
+use gpui_component::init;
 
 use ui::LocToolView;
 
