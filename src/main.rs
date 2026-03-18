@@ -1,14 +1,8 @@
-mod cli;
-mod config;
-mod export;
-mod loc;
-mod ui;
-
 use gpui::{App, Application, Bounds, WindowBounds, WindowOptions, prelude::*, px, size};
 use gpui_component::Root;
 use gpui_component::init;
 
-use ui::LocToolView;
+use cc_loc_tool::ui::LocToolView;
 
 // ============================================================================
 // Main Entry

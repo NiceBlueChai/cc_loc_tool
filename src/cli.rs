@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::export::{ExportFormat, export_results};
-use crate::loc::{Language, scan_directory_simple};
+use crate::loc::{Language, scan_directory_simple, scan_directory_with_complexity, LocSummary};
 
 /// CLI 配置选项
 #[derive(Debug)]
@@ -14,6 +14,8 @@ pub struct CliOptions {
     pub languages: Vec<Language>,
     pub export_path: Option<PathBuf>,
     pub export_format: Option<ExportFormat>,
+    /// 是否启用复杂度分析
+    pub analyze_complexity: bool,
 }
 
 impl Default for CliOptions {
@@ -25,6 +27,7 @@ impl Default for CliOptions {
             languages: Language::all().to_vec(),
             export_path: None,
             export_format: None,
+            analyze_complexity: false,
         }
     }
 }
@@ -118,6 +121,9 @@ pub fn parse_args() -> Result<CliOptions> {
                 println!("cc_loc_tool v0.1.0");
                 std::process::exit(0);
             }
+            "-c" | "--complexity" => {
+                options.analyze_complexity = true;
+            }
             _ => {
                 if options.directory.as_os_str().is_empty() {
                     options.directory = PathBuf::from(arg);
@@ -153,6 +159,7 @@ fn print_help() {
     println!("  -f, --exclude-files FILES    要排除的文件模式，用逗号或分号分隔");
     println!("  -l, --languages LANGS        要扫描的编程语言，用逗号或分号分隔");
     println!("                               支持的语言: C, C++, Java, Python, Go, Rust");
+    println!("  -c, --complexity            启用代码复杂度分析");
     println!("  -o, --output PATH            导出结果的文件路径");
     println!("  -t, --format FORMAT          导出格式: csv, json, html");
     println!("  -h, --help                   显示帮助信息");
@@ -162,6 +169,7 @@ fn print_help() {
     println!("  cc_loc_tool ./my_project");
     println!("  cc_loc_tool -d ./my_project -e build,target -l C++,Java");
     println!("  cc_loc_tool ./my_project -o results.json -t json");
+    println!("  cc_loc_tool ./my_project -c -o complexity.html");
 }
 
 /// 运行 CLI 模式
@@ -179,21 +187,35 @@ pub fn run_cli() -> Result<()> {
             .map(|l| l.display_name())
             .collect::<Vec<_>>()
     );
+    println!("复杂度分析: {}", if options.analyze_complexity { "启用" } else { "禁用" });
     println!();
 
     // 转换排除目录为 HashSet
     let exclude_dirs: HashSet<String> = options.exclude_dirs.into_iter().collect();
 
-    // 执行扫描
-    let results = scan_directory_simple(
-        &options.directory,
-        &exclude_dirs,
-        &options.exclude_files,
-        &options.languages,
-    )?;
+    let results;
+    let summary: LocSummary;
 
-    // 计算统计摘要
-    let summary = crate::loc::LocSummary::from_files(&results);
+    if options.analyze_complexity {
+        // 使用带复杂度分析的扫描
+        results = scan_directory_with_complexity(
+            &options.directory,
+            &exclude_dirs,
+            &options.exclude_files,
+            &options.languages,
+            None,
+        )?;
+        summary = LocSummary::from_files_with_complexity(&results);
+    } else {
+        // 使用简单扫描
+        results = scan_directory_simple(
+            &options.directory,
+            &exclude_dirs,
+            &options.exclude_files,
+            &options.languages,
+        )?;
+        summary = LocSummary::from_files(&results);
+    }
 
     // 打印结果
     println!("扫描完成，共找到 {} 个文件:", summary.files);
@@ -201,6 +223,19 @@ pub fn run_cli() -> Result<()> {
     println!("注释行: {}", summary.comments);
     println!("空白行: {}", summary.blanks);
     println!("总行数: {}", summary.total());
+    
+    // 如果启用了复杂度分析，打印复杂度统计
+    if options.analyze_complexity {
+        if let Some(ref c) = summary.complexity {
+            println!();
+            println!("=== 复杂度分析 ===");
+            println!("平均圈复杂度: {:.1}", c.avg_cyclomatic);
+            println!("函数总数: {}", c.total_functions);
+            println!("高复杂度函数(>10): {}", c.high_complexity_functions);
+            println!("长函数(>50行): {}", c.long_functions);
+            println!("平均函数长度: {:.1}", c.avg_function_length);
+        }
+    }
     println!();
 
     // 如果需要导出

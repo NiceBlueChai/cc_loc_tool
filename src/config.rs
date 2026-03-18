@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::loc::Language;
+use crate::language::Language;
 use crate::ui::Theme;
 
 /// 应用程序配置
