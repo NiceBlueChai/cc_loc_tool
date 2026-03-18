@@ -2,9 +2,8 @@ use anyhow::Result;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-
-use crate::export::{export_results, ExportFormat};
-use crate::loc::{scan_directory_simple, Language};
+use crate::export::{ExportFormat, export_results};
+use crate::loc::{Language, scan_directory_simple};
 
 /// CLI 配置选项
 #[derive(Debug)]
@@ -34,7 +33,7 @@ impl Default for CliOptions {
 pub fn parse_args() -> Result<CliOptions> {
     let mut options = CliOptions::default();
     let mut args = std::env::args().skip(1);
-    
+
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-d" | "--directory" => {
@@ -72,13 +71,16 @@ pub fn parse_args() -> Result<CliOptions> {
                         .split(|c| c == ',' || c == ';')
                         .filter_map(|s| {
                             let s = s.trim().to_lowercase();
-                            Language::all().iter().find(|l| {
-                                l.display_name().to_lowercase() == s || 
-                                l.display_name().replace("+", "pp").to_lowercase() == s
-                            }).copied()
+                            Language::all()
+                                .iter()
+                                .find(|l| {
+                                    l.display_name().to_lowercase() == s
+                                        || l.display_name().replace("+", "pp").to_lowercase() == s
+                                })
+                                .copied()
                         })
                         .collect();
-                    
+
                     if options.languages.is_empty() {
                         anyhow::bail!("没有找到有效的编程语言");
                     }
@@ -96,11 +98,11 @@ pub fn parse_args() -> Result<CliOptions> {
             "-t" | "--format" => {
                 if let Some(format) = args.next() {
                     let format = format.trim().to_lowercase();
-                    options.export_format = ExportFormat::all().iter().find(|f| {
-                        f.name().to_lowercase() == format || 
-                        f.extension() == format
-                    }).copied();
-                    
+                    options.export_format = ExportFormat::all()
+                        .iter()
+                        .find(|f| f.name().to_lowercase() == format || f.extension() == format)
+                        .copied();
+
                     if options.export_format.is_none() {
                         anyhow::bail!("不支持的导出格式: {}", format);
                     }
@@ -125,18 +127,18 @@ pub fn parse_args() -> Result<CliOptions> {
             }
         }
     }
-    
+
     // 确保指定了目录
     if options.directory.as_os_str().is_empty() {
         print_help();
         anyhow::bail!("必须指定要扫描的目录");
     }
-    
+
     // 确保目录存在
     if !options.directory.exists() {
         anyhow::bail!("指定的目录不存在: {:?}", options.directory);
     }
-    
+
     Ok(options)
 }
 
@@ -165,16 +167,23 @@ fn print_help() {
 /// 运行 CLI 模式
 pub fn run_cli() -> Result<()> {
     let options = parse_args()?;
-    
+
     println!("正在扫描目录: {:?}", options.directory);
     println!("排除目录: {:?}", options.exclude_dirs);
     println!("排除文件: {:?}", options.exclude_files);
-    println!("扫描语言: {:?}", options.languages.iter().map(|l| l.display_name()).collect::<Vec<_>>());
+    println!(
+        "扫描语言: {:?}",
+        options
+            .languages
+            .iter()
+            .map(|l| l.display_name())
+            .collect::<Vec<_>>()
+    );
     println!();
-    
+
     // 转换排除目录为 HashSet
     let exclude_dirs: HashSet<String> = options.exclude_dirs.into_iter().collect();
-    
+
     // 执行扫描
     let results = scan_directory_simple(
         &options.directory,
@@ -182,10 +191,10 @@ pub fn run_cli() -> Result<()> {
         &options.exclude_files,
         &options.languages,
     )?;
-    
+
     // 计算统计摘要
     let summary = crate::loc::LocSummary::from_files(&results);
-    
+
     // 打印结果
     println!("扫描完成，共找到 {} 个文件:", summary.files);
     println!("代码行: {}", summary.code);
@@ -193,15 +202,19 @@ pub fn run_cli() -> Result<()> {
     println!("空白行: {}", summary.blanks);
     println!("总行数: {}", summary.total());
     println!();
-    
+
     // 如果需要导出
     if let Some(export_path) = options.export_path {
         let format = options.export_format.unwrap_or(ExportFormat::Csv);
-        println!("正在导出结果到: {:?} (格式: {})", export_path, format.name());
-        
+        println!(
+            "正在导出结果到: {:?} (格式: {})",
+            export_path,
+            format.name()
+        );
+
         export_results(&export_path, format, &summary, &results)?;
         println!("导出成功!");
     }
-    
+
     Ok(())
 }

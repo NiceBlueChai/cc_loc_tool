@@ -23,7 +23,7 @@ impl ExportFormat {
             Self::Html => "html",
         }
     }
-    
+
     /// 获取格式名称
     pub fn name(&self) -> &'static str {
         match self {
@@ -32,7 +32,7 @@ impl ExportFormat {
             Self::Html => "HTML",
         }
     }
-    
+
     /// 获取所有支持的格式
     pub fn all() -> &'static [Self] {
         &[Self::Csv, Self::Json, Self::Html]
@@ -64,10 +64,10 @@ pub fn export_results(
 /// 导出为 CSV 格式
 fn export_to_csv(path: &Path, summary: &LocSummary, files: &[FileLoc]) -> Result<()> {
     let mut writer = csv::WriterBuilder::new().from_path(path)?;
-    
+
     // 写入文件统计数据
     writer.write_record(&["文件路径", "代码行", "注释行", "空白行", "总行数"])?;
-    
+
     for file in files {
         let path_str = file.path.to_string_lossy().to_string();
         writer.write_record(&[
@@ -78,24 +78,18 @@ fn export_to_csv(path: &Path, summary: &LocSummary, files: &[FileLoc]) -> Result
             file.total().to_string(),
         ])?;
     }
-    
+
     // 写入总计
     writer.write_record(&["总计", "", "", "", ""])?;
-    
+
     // 为数值创建临时字符串
     let code_str = summary.code.to_string();
     let comments_str = summary.comments.to_string();
     let blanks_str = summary.blanks.to_string();
     let total_str = summary.total().to_string();
-    
-    writer.write_record(&[
-        "",
-        &code_str,
-        &comments_str,
-        &blanks_str,
-        &total_str,
-    ])?;
-    
+
+    writer.write_record(&["", &code_str, &comments_str, &blanks_str, &total_str])?;
+
     writer.flush()?;
     Ok(())
 }
@@ -107,7 +101,7 @@ fn export_to_json(path: &Path, summary: &LocSummary, files: &[FileLoc]) -> Resul
         files: files.to_vec(),
         export_time: chrono::Local::now().to_string(),
     };
-    
+
     let json_content = serde_json::to_string_pretty(&export_data)?;
     fs::write(path, json_content)?;
     Ok(())
@@ -123,7 +117,7 @@ fn export_to_html(path: &Path, summary: &LocSummary, files: &[FileLoc]) -> Resul
 /// 生成 HTML 内容
 fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
     let export_time = chrono::Local::now().to_string();
-    
+
     // 提取统计数据到单独变量
     let files_count = summary.files;
     let code_lines = summary.code;
@@ -131,8 +125,9 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
     let blanks_lines = summary.blanks;
     let total_lines = summary.total();
     let file_rows = generate_file_rows(files);
-    
-    format!(r#"<!DOCTYPE html>
+
+    format!(
+        r#"<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -268,7 +263,7 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
         导出时间: {}
     </div>
 </body>
-</html>"#, 
+</html>"#,
         files_count,
         code_lines,
         comments_lines,
@@ -285,16 +280,18 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
 
 /// 生成文件行的 HTML 内容
 fn generate_file_rows(files: &[FileLoc]) -> String {
-    files.iter()
+    files
+        .iter()
         .map(|file| {
             let path_str = encode_text(&file.path.to_string_lossy()).to_string();
-            format!(r#"<tr>
+            format!(
+                r#"<tr>
                 <td>{path}</td>
                 <td>{code}</td>
                 <td>{comments}</td>
                 <td>{blanks}</td>
                 <td>{total}</td>
-            </tr>"#, 
+            </tr>"#,
                 path = path_str,
                 code = file.code,
                 comments = file.comments,

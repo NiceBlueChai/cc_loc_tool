@@ -3,7 +3,7 @@ use rayon::prelude::*;
 use std::collections::HashSet;
 use walkdir::WalkDir;
 
-use super::counter::{count_file, FileLoc};
+use super::counter::{FileLoc, count_file};
 
 /// Supported programming languages
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -19,7 +19,14 @@ pub enum Language {
 impl Language {
     /// Get all supported languages
     pub fn all() -> &'static [Self] {
-        &[Self::C, Self::Cpp, Self::Java, Self::Python, Self::Go, Self::Rust]
+        &[
+            Self::C,
+            Self::Cpp,
+            Self::Java,
+            Self::Python,
+            Self::Go,
+            Self::Rust,
+        ]
     }
 
     /// Get display name for the language
@@ -139,51 +146,49 @@ pub fn scan_directory(
             if !path.is_file() {
                 return false;
             }
-            
+
             // 检查是否为支持的文件类型
             if !is_supported_file(path, languages) {
                 return false;
             }
-            
+
             // 检查是否需要排除
             let file_name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
-            
+
             !exclude_files
                 .iter()
                 .any(|pattern| matches_pattern(pattern, &file_name))
         })
         .map(|entry| entry.path().to_path_buf())
         .collect();
-    
+
     let total_files = files.len();
-    
+
     // 如果有进度回调，先报告0%进度
     if let Some(callback) = progress_callback {
         callback(0, total_files);
     }
-    
+
     // 并行处理所有文件
     let results: Vec<FileLoc> = files
         .par_iter() // 并行迭代器
-        .filter_map(|path| {
-            match count_file(path) {
-                Ok(loc) => Some(loc),
-                Err(e) => {
-                    eprintln!("Error reading {:?}: {}", path, e);
-                    None
-                }
+        .filter_map(|path| match count_file(path) {
+            Ok(loc) => Some(loc),
+            Err(e) => {
+                eprintln!("Error reading {:?}: {}", path, e);
+                None
             }
         })
         .collect(); // 收集结果
-    
+
     // 报告100%进度
     if let Some(callback) = progress_callback {
         callback(total_files, total_files);
     }
-    
+
     Ok(results)
 }
 
