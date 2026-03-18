@@ -3,70 +3,8 @@ use rayon::prelude::*;
 use std::collections::HashSet;
 use walkdir::WalkDir;
 
-use super::counter::{FileLoc, count_file};
-
-/// Supported programming languages
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Language {
-    C,
-    Cpp,
-    Java,
-    Python,
-    Go,
-    Rust,
-}
-
-impl Language {
-    /// Get all supported languages
-    pub fn all() -> &'static [Self] {
-        &[
-            Self::C,
-            Self::Cpp,
-            Self::Java,
-            Self::Python,
-            Self::Go,
-            Self::Rust,
-        ]
-    }
-
-    /// Get display name for the language
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Self::C => "C",
-            Self::Cpp => "C++",
-            Self::Java => "Java",
-            Self::Python => "Python",
-            Self::Go => "Go",
-            Self::Rust => "Rust",
-        }
-    }
-
-    /// Get file extensions for the language
-    pub fn extensions(&self) -> &'static [&'static str] {
-        match self {
-            Self::C => &["c", "h"],
-            Self::Cpp => &["cc", "cpp", "cxx", "h", "hpp", "hxx", "inl"],
-            Self::Java => &["java"],
-            Self::Python => &["py"],
-            Self::Go => &["go"],
-            Self::Rust => &["rs"],
-        }
-    }
-
-    /// Check if the file has an extension associated with this language
-    pub fn matches_file(&self, path: &std::path::Path) -> bool {
-        let Some(ext) = path.extension() else {
-            return false;
-        };
-        let ext = ext.to_string_lossy().to_lowercase();
-        self.extensions().contains(&ext.as_str())
-    }
-}
-
-/// Check if the file extension is supported by any language
-pub fn is_supported_file(path: &std::path::Path, languages: &[Language]) -> bool {
-    languages.iter().any(|lang| lang.matches_file(path))
-}
+use super::counter::{FileLoc, count_file, count_file_with_complexity};
+use crate::language::{Language, is_supported_file};
 
 /// Simple wildcard pattern matching (* matches any characters)
 fn matches_pattern(pattern: &str, text: &str) -> bool {
@@ -200,4 +138,74 @@ pub fn scan_directory_simple(
     languages: &[Language],
 ) -> Result<Vec<FileLoc>> {
     scan_directory(root, exclude_dirs, exclude_files, languages, None)
+}
+
+/// Walk directory and count all supported files with complexity analysis
+pub fn scan_directory_with_complexity(
+    root: &std::path::Path,
+    exclude_dirs: &HashSet<String>,
+    exclude_files: &[String],
+    languages: &[Language],
+    progress_callback: Option<&dyn Fn(usize, usize)>,
+) -> Result<Vec<FileLoc>> {
+    // 收集所有符合条件的文件路径
+    let files: Vec<_> = WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy();
+            if name.starts_with('.') {
+                return false;
+            }
+            if e.file_type().is_dir() && exclude_dirs.contains(name.as_ref()) {
+                return false;
+            }
+            true
+        })
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            let path = entry.path();
+            if !path.is_file() {
+                return false;
+            }
+
+            if !is_supported_file(path, languages) {
+                return false;
+            }
+
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            !exclude_files
+                .iter()
+                .any(|pattern| matches_pattern(pattern, &file_name))
+        })
+        .map(|entry| entry.path().to_path_buf())
+        .collect();
+
+    let total_files = files.len();
+
+    if let Some(callback) = progress_callback {
+        callback(0, total_files);
+    }
+
+    // 并行处理所有文件，包含复杂度分析
+    let results: Vec<FileLoc> = files
+        .par_iter()
+        .filter_map(|path| match count_file_with_complexity(path) {
+            Ok(loc) => Some(loc),
+            Err(e) => {
+                eprintln!("Error reading {:?}: {}", path, e);
+                None
+            }
+        })
+        .collect();
+
+    if let Some(callback) = progress_callback {
+        callback(total_files, total_files);
+    }
+
+    Ok(results)
 }
