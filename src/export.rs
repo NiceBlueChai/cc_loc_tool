@@ -65,30 +65,50 @@ pub fn export_results(
 fn export_to_csv(path: &Path, summary: &LocSummary, files: &[FileLoc]) -> Result<()> {
     let mut writer = csv::WriterBuilder::new().from_path(path)?;
 
-    // 写入文件统计数据
-    writer.write_record(&["文件路径", "代码行", "注释行", "空白行", "总行数"])?;
+    // 写入文件统计数据（包含复杂度列）
+    writer.write_record(&["文件路径", "代码行", "注释行", "空白行", "总行数", "最大复杂度", "函数数"])?;
 
     for file in files {
         let path_str = file.path.to_string_lossy().to_string();
+        // 复杂度数据
+        let (max_complexity, func_count) = match &file.complexity {
+            Some(c) => (c.max_cyclomatic.to_string(), c.functions.len().to_string()),
+            None => ("-".to_string(), "-".to_string()),
+        };
         writer.write_record(&[
             path_str,
             file.code.to_string(),
             file.comments.to_string(),
             file.blanks.to_string(),
             file.total().to_string(),
+            max_complexity,
+            func_count,
         ])?;
     }
 
     // 写入总计
-    writer.write_record(&["总计", "", "", "", ""])?;
+    writer.write_record(&["总计", "", "", "", "", "", ""])?;
 
     // 为数值创建临时字符串
     let code_str = summary.code.to_string();
     let comments_str = summary.comments.to_string();
     let blanks_str = summary.blanks.to_string();
     let total_str = summary.total().to_string();
+    
+    // 复杂度汇总
+    let (avg_complexity, total_functions, high_complexity) = match &summary.complexity {
+        Some(c) => (format!("{:.1}", c.avg_cyclomatic), c.total_functions.to_string(), c.high_complexity_functions.to_string()),
+        None => ("-".to_string(), "-".to_string(), "-".to_string()),
+    };
 
-    writer.write_record(&["", &code_str, &comments_str, &blanks_str, &total_str])?;
+    writer.write_record(&["", &code_str, &comments_str, &blanks_str, &total_str, &avg_complexity, &total_functions])?;
+    
+    // 如果有复杂度数据，添加额外信息行
+    if summary.complexity.is_some() {
+        writer.write_record(&["复杂度统计", "", "", "", "", "高复杂度函数", "长函数(>50行)"])?;
+        let long_funcs = summary.complexity.as_ref().map(|c| c.long_functions.to_string()).unwrap_or("-".to_string());
+        writer.write_record(&["", "", "", "", "", &high_complexity, &long_funcs])?;
+    }
 
     writer.flush()?;
     Ok(())
@@ -125,6 +145,36 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
     let blanks_lines = summary.blanks;
     let total_lines = summary.total();
     let file_rows = generate_file_rows(files);
+    
+    // 复杂度统计卡片
+    let complexity_cards = if let Some(c) = &summary.complexity {
+        format!(
+            r#"<div class="summary-card">
+            <h3>平均复杂度</h3>
+            <div class="value">{:.1}</div>
+        </div>
+        <div class="summary-card">
+            <h3>函数总数</h3>
+            <div class="value">{}</div>
+        </div>
+        <div class="summary-card" style="border-left: 4px solid {};">
+            <h3>高复杂度函数</h3>
+            <div class="value">{}</div>
+        </div>
+        <div class="summary-card" style="border-left: 4px solid {};">
+            <h3>长函数(>50行)</h3>
+            <div class="value">{}</div>
+        </div>"#,
+            c.avg_cyclomatic,
+            c.total_functions,
+            if c.high_complexity_functions > 0 { "#e74c3c" } else { "#27ae60" },
+            c.high_complexity_functions,
+            if c.long_functions > 0 { "#e74c3c" } else { "#27ae60" },
+            c.long_functions
+        )
+    } else {
+        String::new()
+    };
 
     format!(
         r#"<!DOCTYPE html>
@@ -151,7 +201,7 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
         .summary-container {{
             display: flex;
             justify-content: space-around;
-            margin-bottom: 40px;
+            margin-bottom: 20px;
             flex-wrap: wrap;
             gap: 20px;
         }}
@@ -174,6 +224,14 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
             font-size: 24px;
             font-weight: bold;
             color: #2c3e50;
+        }}
+        .section-title {{
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 14px;
+            margin: 20px 0 10px 0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }}
         table {{
             width: 100%;
@@ -203,6 +261,18 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
             background-color: #ecf0f1;
             font-weight: bold;
         }}
+        .complexity-good {{
+            color: #27ae60;
+            font-weight: bold;
+        }}
+        .complexity-moderate {{
+            color: #f39c12;
+            font-weight: bold;
+        }}
+        .complexity-poor {{
+            color: #e74c3c;
+            font-weight: bold;
+        }}
         .footer {{
             text-align: center;
             margin-top: 40px;
@@ -214,6 +284,7 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
 <body>
     <h1>代码行统计报告</h1>
     
+    <div class="section-title">基础统计</div>
     <div class="summary-container">
         <div class="summary-card">
             <h3>文件数量</h3>
@@ -237,6 +308,8 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
         </div>
     </div>
     
+    {}
+    
     <table>
         <thead>
             <tr>
@@ -245,6 +318,8 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
                 <th>注释行</th>
                 <th>空白行</th>
                 <th>总行数</th>
+                <th>复杂度</th>
+                <th>函数数</th>
             </tr>
         </thead>
         <tbody>
@@ -255,6 +330,8 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
                 <td>{}</td>
                 <td>{}</td>
                 <td>{}</td>
+                <td>-</td>
+                <td>-</td>
             </tr>
         </tbody>
     </table>
@@ -269,6 +346,7 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
         comments_lines,
         blanks_lines,
         total_lines,
+        complexity_cards,
         file_rows,
         code_lines,
         comments_lines,
@@ -284,6 +362,25 @@ fn generate_file_rows(files: &[FileLoc]) -> String {
         .iter()
         .map(|file| {
             let path_str = encode_text(&file.path.to_string_lossy()).to_string();
+            
+            // 复杂度数据和样式
+            let (complexity_html, func_count) = match &file.complexity {
+                Some(c) => {
+                    let css_class = if c.max_cyclomatic <= 10 {
+                        "complexity-good"
+                    } else if c.max_cyclomatic <= 20 {
+                        "complexity-moderate"
+                    } else {
+                        "complexity-poor"
+                    };
+                    (
+                        format!(r#"<span class="{}">{}</span>"#, css_class, c.max_cyclomatic),
+                        c.functions.len().to_string()
+                    )
+                }
+                None => ("-".to_string(), "-".to_string()),
+            };
+            
             format!(
                 r#"<tr>
                 <td>{path}</td>
@@ -291,12 +388,16 @@ fn generate_file_rows(files: &[FileLoc]) -> String {
                 <td>{comments}</td>
                 <td>{blanks}</td>
                 <td>{total}</td>
+                <td>{complexity}</td>
+                <td>{func_count}</td>
             </tr>"#,
                 path = path_str,
                 code = file.code,
                 comments = file.comments,
                 blanks = file.blanks,
-                total = file.total()
+                total = file.total(),
+                complexity = complexity_html,
+                func_count = func_count
             )
         })
         .collect::<Vec<String>>()
