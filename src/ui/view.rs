@@ -10,14 +10,15 @@ use gpui_component::{
     theme::ActiveTheme,
     v_flex,
     Root,
+    Sizable,
 };
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use crate::config::AppConfig;
 use crate::export::{ExportFormat, export_results};
-use crate::loc::{FileLoc, Language, LocSummary, scan_directory};
+use crate::loc::{FileLoc, Language, LocSummary, scan_directory_with_complexity};
 
-use super::state::{ScanProgress, ScanState, SortColumn, SortOrder, Theme};
+use super::state::{ComplexityDetailState, ScanProgress, ScanState, SortColumn, SortOrder, Theme};
 
 /// 文件预览窗口视图
 pub struct FilePreviewView {
@@ -27,10 +28,8 @@ pub struct FilePreviewView {
 
 impl FilePreviewView {
     pub fn new(file_path: &PathBuf, content: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        // 根据文件扩展名确定语言类型
         let language = Self::detect_language(file_path);
         
-        // 创建代码编辑器状态
         let editor = cx.new(|cx| {
             InputState::new(window, cx)
                 .code_editor(&language)
@@ -44,7 +43,6 @@ impl FilePreviewView {
         }
     }
     
-    /// 根据文件扩展名检测语言类型
     fn detect_language(path: &PathBuf) -> String {
         match path.extension().and_then(|ext| ext.to_str()) {
             Some("c") => "c",
@@ -82,7 +80,6 @@ impl Render for FilePreviewView {
             .bg(theme.background)
             .text_color(theme.foreground)
             .child(
-                // 窗口标题栏
                 div()
                     .p_4()
                     .border_b_1()
@@ -95,11 +92,164 @@ impl Render for FilePreviewView {
                     ),
             )
             .child(
-                // 代码编辑器显示区域
                 div()
                     .flex_1()
                     .p_2()
                     .child(Input::new(&self.editor).h_full()),
+            )
+    }
+}
+
+/// 复杂度详情视图
+pub struct ComplexityDetailView {
+    file_path: PathBuf,
+    complexity: crate::complexity::FileComplexity,
+}
+
+impl ComplexityDetailView {
+    pub fn new(
+        file_path: &PathBuf,
+        complexity: crate::complexity::FileComplexity,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            file_path: file_path.clone(),
+            complexity,
+        }
+    }
+}
+
+impl Render for ComplexityDetailView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        
+        // 按复杂度降序排列函数
+        let mut sorted_functions = self.complexity.functions.clone();
+        sorted_functions.sort_by(|a, b| b.cyclomatic.cmp(&a.cyclomatic));
+
+        v_flex()
+            .size_full()
+            .bg(theme.background)
+            .text_color(theme.foreground)
+            .child(
+                // 标题栏
+                div()
+                    .p_4()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .bg(theme.muted)
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .child(format!("复杂度详情 - {}", self.file_path.file_name().unwrap_or_default().to_string_lossy()))
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_4()
+                                    .text_sm()
+                                    .text_color(theme.muted_foreground)
+                                    .child(format!("总复杂度: {}", self.complexity.cyclomatic))
+                                    .child(format!("平均复杂度: {:.1}", self.complexity.avg_cyclomatic))
+                                    .child(format!("函数数: {}", self.complexity.functions.len()))
+                                    .child(format!("高复杂度函数: {}", self.complexity.high_complexity_count()))
+                            )
+                    ),
+            )
+            .child(
+                // 函数列表
+                div()
+                    .flex_1()
+                    .overflow_y_scrollbar()
+                    .p_2()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            // 表头
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .p_2()
+                                    .bg(theme.muted)
+                                    .rounded(theme.radius)
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_sm()
+                                    .child(div().w(px(200.0)).child("函数名"))
+                                    .child(div().w(px(80.0)).text_center().child("行号"))
+                                    .child(div().w(px(60.0)).text_center().child("行数"))
+                                    .child(div().w(px(80.0)).text_center().child("复杂度"))
+                                    .child(div().w(px(60.0)).text_center().child("参数"))
+                                    .child(div().w(px(60.0)).text_center().child("状态"))
+                            )
+                            // 函数行
+                            .children(sorted_functions.iter().enumerate().map(|(i, func)| {
+                                let bg = if i % 2 == 0 {
+                                    theme.background
+                                } else {
+                                    theme.muted.opacity(0.3)
+                                };
+                                
+                                // 复杂度颜色
+                                let (complexity_color, status_text, status_color) = if func.cyclomatic <= 10 {
+                                    (theme.success, "良好", theme.success)
+                                } else if func.cyclomatic <= 20 {
+                                    (theme.warning, "中等", theme.warning)
+                                } else {
+                                    (theme.danger, "需改进", theme.danger)
+                                };
+
+                                h_flex()
+                                    .gap_2()
+                                    .p_2()
+                                    .bg(bg)
+                                    .rounded(theme.radius)
+                                    .text_sm()
+                                    .child(
+                                        div()
+                                            .w(px(200.0))
+                                            .overflow_x_hidden()
+                                            .child(func.name.clone())
+                                    )
+                                    .child(
+                                        div()
+                                            .w(px(80.0))
+                                            .text_center()
+                                            .text_color(theme.muted_foreground)
+                                            .child(format!("{}-{}", func.start_line, func.end_line))
+                                    )
+                                    .child(
+                                        div()
+                                            .w(px(60.0))
+                                            .text_center()
+                                            .child(format!("{}", func.lines))
+                                    )
+                                    .child(
+                                        div()
+                                            .w(px(80.0))
+                                            .text_center()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(complexity_color)
+                                            .child(format!("{}", func.cyclomatic))
+                                    )
+                                    .child(
+                                        div()
+                                            .w(px(60.0))
+                                            .text_center()
+                                            .child(format!("{}", func.parameter_count))
+                                    )
+                                    .child(
+                                        div()
+                                            .w(px(60.0))
+                                            .text_center()
+                                            .text_color(status_color)
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .child(status_text)
+                                    )
+                            }))
+                    )
             )
     }
 }
@@ -118,11 +268,11 @@ pub struct LocToolView {
     selected_languages: Vec<Language>,
     config: AppConfig,
     theme: Theme,
+    complexity_detail_state: ComplexityDetailState,
 }
 
 impl LocToolView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        // 加载配置文件
         let config = match AppConfig::load() {
             Ok(config) => config,
             Err(e) => {
@@ -131,21 +281,18 @@ impl LocToolView {
             }
         };
 
-        // 根据配置设置排除目录的默认值
         let exclude_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(config.exclude_dirs_to_string())
                 .placeholder("输入要排除的目录名，用逗号或分号分隔...")
         });
 
-        // 根据配置设置排除文件的默认值
         let exclude_files_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(config.exclude_files_to_string())
                 .placeholder("排除文件，支持通配符 * ，如: moc_*,*.generated.cpp")
         });
 
-        // 先获取theme值，避免移动config后无法访问
         let theme = config.theme;
 
         Self {
@@ -165,6 +312,7 @@ impl LocToolView {
             selected_languages: config.get_selected_languages(),
             config,
             theme,
+            complexity_detail_state: ComplexityDetailState::default(),
         }
     }
 
@@ -184,7 +332,6 @@ impl LocToolView {
                     cx.update(|cx| {
                         this.update(cx, |view, _cx| {
                             view.selected_path = Some(path.clone());
-                            // 更新配置并保存
                             view.config.last_selected_path = Some(path);
                             if let Err(e) = view.config.save() {
                                 eprintln!("保存配置失败: {}", e);
@@ -217,7 +364,6 @@ impl LocToolView {
 
         let path = Arc::new(path);
 
-        // 排除目录
         let exclude_value = self.exclude_input.read(cx).value().to_string();
         let exclude_dirs: HashSet<String> = exclude_value
             .split(|c| c == ',' || c == ';')
@@ -226,7 +372,6 @@ impl LocToolView {
             .collect();
         let exclude_dirs_arc = Arc::new(exclude_dirs.clone());
 
-        // 排除文件
         let exclude_files_value = self.exclude_files_input.read(cx).value().to_string();
         let exclude_files: Vec<String> = exclude_files_value
             .split(|c| c == ',' || c == ';')
@@ -235,17 +380,14 @@ impl LocToolView {
             .collect();
         let exclude_files_arc = Arc::new(exclude_files.clone());
 
-        // 更新配置
         self.config.exclude_dirs = exclude_dirs;
         self.config.exclude_files = exclude_files;
         self.config.set_selected_languages(&self.selected_languages);
 
-        // 保存配置
         if let Err(e) = self.config.save() {
             eprintln!("保存配置失败: {}", e);
         }
 
-        // 选中的语言
         let selected_languages = self.selected_languages.clone();
 
         cx.spawn(async move |this, cx| {
@@ -254,34 +396,29 @@ impl LocToolView {
             let exclude_files_clone = exclude_files_arc.clone();
             let selected_languages_clone = selected_languages.clone();
 
-            // 创建一个通道来传递进度信息
             let (progress_sender, _progress_receiver) = std::sync::mpsc::channel();
 
-            // 在后台执行扫描
+            // 使用带复杂度分析的扫描函数
             let result = cx
                 .background_spawn(async move {
-                    scan_directory(
+                    scan_directory_with_complexity(
                         &path_clone,
                         &exclude_dirs_clone,
                         &exclude_files_clone,
                         &selected_languages_clone,
                         Some(&|processed, total| {
-                            // 发送进度信息
                             let _ = progress_sender.send((processed, total));
                         }),
                     )
                 })
                 .await;
 
-            // 处理进度信息 - 简化实现，避免复杂的线程间通信
-            // 注意：由于gpui框架的限制，我们将在扫描完成后更新进度
-            // 完整的进度更新需要更复杂的框架集成
-
             cx.update(|cx| {
                 this.update(cx, |view, cx| {
                     match result {
                         Ok(files) => {
-                            view.summary = LocSummary::from_files(&files);
+                            // 使用带复杂度统计的汇总函数
+                            view.summary = LocSummary::from_files_with_complexity(&files);
                             view.results = files;
                             view.scan_state = ScanState::Done;
                         }
@@ -313,18 +450,13 @@ impl LocToolView {
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(paths))) = receiver.await {
                 if let Some(path) = paths.into_iter().next() {
-                    // 根据文件扩展名确定导出格式
                     let format = match path.extension().and_then(|ext| ext.to_str()) {
                         Some("csv") => ExportFormat::Csv,
                         Some("json") => ExportFormat::Json,
                         Some("html") => ExportFormat::Html,
-                        _ => {
-                            // 默认使用CSV格式
-                            ExportFormat::Csv
-                        }
+                        _ => ExportFormat::Csv,
                     };
 
-                    // 执行导出
                     match export_results(&path, format, &summary, &files) {
                         Ok(_) => {
                             cx.update(|cx| {
@@ -364,7 +496,6 @@ impl LocToolView {
             .p_4()
             .border_b_1()
             .border_color(cx.theme().border)
-            // 第一行：路径选择
             .child(
                 h_flex()
                     .gap_3()
@@ -426,7 +557,6 @@ impl LocToolView {
                             })),
                     ),
             )
-            // 第二行：语言选择
             .child(
                 h_flex()
                     .gap_3()
@@ -444,7 +574,6 @@ impl LocToolView {
                             .gap_2()
                             .flex_wrap()
                             .child(
-                                // 全选按钮
                                 Button::new("select-all")
                                     .label("全选")
                                     .disabled(
@@ -458,7 +587,6 @@ impl LocToolView {
                                     })),
                             )
                             .child(
-                                // 全不选按钮
                                 Button::new("deselect-all")
                                     .label("全不选")
                                     .disabled(is_scanning || self.selected_languages.is_empty())
@@ -467,10 +595,8 @@ impl LocToolView {
                                         cx.notify();
                                     })),
                             )
-                            // 语言选择按钮
                             .children(Language::all().iter().map(|&language| {
                                 let is_selected = self.selected_languages.contains(&language);
-                                // 使用语言的变体名称作为固定ID
                                 let button_id = match language {
                                     Language::C => "lang-c",
                                     Language::Cpp => "lang-cpp",
@@ -484,7 +610,6 @@ impl LocToolView {
                                     .label(language.display_name())
                                     .disabled(is_scanning);
 
-                                // 根据选择状态设置是否为主要按钮
                                 let button = if is_selected {
                                     button.primary()
                                 } else {
@@ -497,7 +622,6 @@ impl LocToolView {
                             })),
                     ),
             )
-            // 第三行：排除目录（输入框）
             .child(
                 h_flex()
                     .gap_3()
@@ -512,7 +636,6 @@ impl LocToolView {
                     )
                     .child(div().flex_1().child(Input::new(&self.exclude_input))),
             )
-            // 第四行：排除文件（输入框）
             .child(
                 h_flex()
                     .gap_3()
@@ -542,7 +665,6 @@ impl LocToolView {
             .gap_4()
             .p_4()
             .bg(theme.muted)
-            // 统计卡片行
             .child(
                 h_flex()
                     .gap_4()
@@ -573,9 +695,41 @@ impl LocToolView {
                                 })),
                         ),
                     ),
-            );
+            )
+            // 复杂度统计卡片行
+            .when_some(self.summary.complexity.as_ref(), |this, complexity| {
+                this.child(
+                    h_flex()
+                        .gap_4()
+                        .flex_wrap()
+                        .pt_4()
+                        .border_t_1()
+                        .border_color(theme.border)
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(theme.muted_foreground)
+                                .child("复杂度分析"),
+                        )
+                        .child(self.render_stat_card_f64("平均圈复杂度", complexity.avg_cyclomatic, theme.info, cx))
+                        .child(self.render_stat_card("函数总数", complexity.total_functions, theme.success, cx))
+                        .child(self.render_stat_card(
+                            "高复杂度函数",
+                            complexity.high_complexity_functions,
+                            if complexity.high_complexity_functions > 0 { theme.danger } else { theme.success },
+                            cx,
+                        ))
+                        .child(self.render_stat_card_f64("平均函数长度", complexity.avg_function_length, theme.warning, cx))
+                        .child(self.render_stat_card(
+                            "长函数(>50行)",
+                            complexity.long_functions,
+                            if complexity.long_functions > 0 { theme.danger } else { theme.success },
+                            cx,
+                        )),
+                )
+            });
 
-        // 只有当有数据时才添加统计图表
         if self.summary.total() > 0 {
             content.child(
                 div()
@@ -589,6 +743,38 @@ impl LocToolView {
         } else {
             content
         }
+    }
+
+    fn render_stat_card_f64(
+        &self,
+        label: &str,
+        value: f64,
+        color: gpui::Hsla,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let theme = cx.theme();
+
+        v_flex()
+            .gap_1()
+            .p_3()
+            .rounded(theme.radius)
+            .bg(theme.background)
+            .border_1()
+            .border_color(theme.border)
+            .min_w(px(100.0))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(label.to_string()),
+            )
+            .child(
+                div()
+                    .text_xl()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(color)
+                    .child(format!("{:.1}", value)),
+            )
     }
 
     fn render_stat_card(
@@ -623,7 +809,6 @@ impl LocToolView {
             )
     }
 
-    /// 渲染统计图表（进度条样式）
     fn render_chart(&self, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let total = self.summary.total() as f64;
@@ -632,17 +817,14 @@ impl LocToolView {
             return div().child("无数据可显示");
         }
 
-        // 计算各部分比例
         let code_ratio = self.summary.code as f64 / total;
         let comments_ratio = self.summary.comments as f64 / total;
         let blanks_ratio = self.summary.blanks as f64 / total;
 
-        // 计算百分比
         let code_percent = code_ratio * 100.0;
         let comments_percent = comments_ratio * 100.0;
         let blanks_percent = blanks_ratio * 100.0;
 
-        // 图表宽度
         let chart_width = 300.0;
 
         v_flex()
@@ -655,7 +837,6 @@ impl LocToolView {
                     .text_color(theme.foreground)
                     .child("代码构成比例"),
             )
-            // 进度条图表
             .child(
                 div()
                     .w(px(chart_width as f32))
@@ -684,12 +865,10 @@ impl LocToolView {
                             ),
                     ),
             )
-            // 图例
             .child(
                 v_flex()
                     .gap_2()
                     .w(px(chart_width as f32))
-                    // 代码行图例
                     .child(
                         h_flex()
                             .gap_2()
@@ -706,7 +885,6 @@ impl LocToolView {
                                 self.summary.code, code_percent
                             ))),
                     )
-                    // 注释行图例
                     .child(
                         h_flex()
                             .gap_2()
@@ -723,7 +901,6 @@ impl LocToolView {
                                 self.summary.comments, comments_percent
                             ))),
                     )
-                    // 空白行图例
                     .child(
                         h_flex()
                             .gap_2()
@@ -745,33 +922,29 @@ impl LocToolView {
 
     fn toggle_sort(&mut self, column: SortColumn, cx: &mut Context<Self>) {
         if self.sort_column == column {
-            // 切换排序方向
             self.sort_order = match self.sort_order {
                 SortOrder::Asc => SortOrder::Desc,
                 SortOrder::Desc => SortOrder::Asc,
             };
         } else {
             self.sort_column = column;
-            self.sort_order = SortOrder::Desc; // 默认降序（数字大的在前）
+            self.sort_order = SortOrder::Desc;
         }
         self.sort_results();
         cx.notify();
     }
 
     fn toggle_theme(&mut self, cx: &mut Context<Self>) {
-        // 切换主题
         self.theme = match self.theme {
             Theme::Light => Theme::Dark,
             Theme::Dark => Theme::Light,
         };
 
-        // 更新配置
         self.config.theme = self.theme;
         if let Err(e) = self.config.save() {
             eprintln!("保存主题配置失败: {}", e);
         }
 
-        // 重新渲染UI，使主题更改生效
         cx.notify();
     }
 
@@ -781,51 +954,40 @@ impl LocToolView {
             SortColumn::Path => {
                 self.results.sort_by(|a, b| {
                     let cmp = a.path.cmp(&b.path);
-                    if order == SortOrder::Asc {
-                        cmp
-                    } else {
-                        cmp.reverse()
-                    }
+                    if order == SortOrder::Asc { cmp } else { cmp.reverse() }
                 });
             }
             SortColumn::Code => {
                 self.results.sort_by(|a, b| {
                     let cmp = a.code.cmp(&b.code);
-                    if order == SortOrder::Asc {
-                        cmp
-                    } else {
-                        cmp.reverse()
-                    }
+                    if order == SortOrder::Asc { cmp } else { cmp.reverse() }
                 });
             }
             SortColumn::Comments => {
                 self.results.sort_by(|a, b| {
                     let cmp = a.comments.cmp(&b.comments);
-                    if order == SortOrder::Asc {
-                        cmp
-                    } else {
-                        cmp.reverse()
-                    }
+                    if order == SortOrder::Asc { cmp } else { cmp.reverse() }
                 });
             }
             SortColumn::Blanks => {
                 self.results.sort_by(|a, b| {
                     let cmp = a.blanks.cmp(&b.blanks);
-                    if order == SortOrder::Asc {
-                        cmp
-                    } else {
-                        cmp.reverse()
-                    }
+                    if order == SortOrder::Asc { cmp } else { cmp.reverse() }
                 });
             }
             SortColumn::Total => {
                 self.results.sort_by(|a, b| {
                     let cmp = a.total().cmp(&b.total());
-                    if order == SortOrder::Asc {
-                        cmp
-                    } else {
-                        cmp.reverse()
-                    }
+                    if order == SortOrder::Asc { cmp } else { cmp.reverse() }
+                });
+            }
+            SortColumn::Complexity => {
+                // 按最大复杂度排序，没有复杂度数据的排在最后
+                self.results.sort_by(|a, b| {
+                    let a_complexity = a.complexity.as_ref().map(|c| c.max_cyclomatic).unwrap_or(0);
+                    let b_complexity = b.complexity.as_ref().map(|c| c.max_cyclomatic).unwrap_or(0);
+                    let cmp = a_complexity.cmp(&b_complexity);
+                    if order == SortOrder::Asc { cmp } else { cmp.reverse() }
                 });
             }
         }
@@ -845,7 +1007,7 @@ impl LocToolView {
                 SortOrder::Desc => "↓",
             }
         } else {
-            "↓" // 占位符，透明显示
+            "↓"
         };
 
         let cell = h_flex()
@@ -875,7 +1037,7 @@ impl LocToolView {
                     .text_color(if is_active {
                         cx.theme().primary
                     } else {
-                        gpui::transparent_black() // 透明占位
+                        gpui::transparent_black()
                     })
                     .child(indicator),
             );
@@ -894,7 +1056,6 @@ impl LocToolView {
             .p_4()
             .gap_2()
             .child(
-                // Table header
                 h_flex()
                     .gap_2()
                     .p_2()
@@ -910,7 +1071,9 @@ impl LocToolView {
                         cx,
                     ))
                     .child(self.render_header_cell("空白", SortColumn::Blanks, Some(px(80.0)), cx))
-                    .child(self.render_header_cell("总计", SortColumn::Total, Some(px(80.0)), cx)),
+                    .child(self.render_header_cell("总计", SortColumn::Total, Some(px(80.0)), cx))
+                    .child(self.render_header_cell("复杂度", SortColumn::Complexity, Some(px(80.0)), cx))
+                    .child(div().w(px(60.0))), // 详情按钮预留空间
             )
             .child(
                 div()
@@ -924,8 +1087,6 @@ impl LocToolView {
                             } else {
                                 theme.muted.opacity(0.3)
                             };
-                            // 不再需要选中状态，因为改为新窗口显示预览
-                            let is_selected = false;
 
                             let path_str = file
                                 .path
@@ -936,6 +1097,28 @@ impl LocToolView {
                                 .to_string_lossy()
                                 .to_string();
 
+                            // 复杂度显示：显示最大复杂度，并根据等级着色
+                            let (complexity_text, complexity_color) = match &file.complexity {
+                                Some(c) => {
+                                    let text = format!("{}", c.max_cyclomatic);
+                                    // 根据复杂度等级着色
+                                    let color = if c.max_cyclomatic <= 10 {
+                                        theme.success  // 良好
+                                    } else if c.max_cyclomatic <= 20 {
+                                        theme.warning  // 中等
+                                    } else {
+                                        theme.danger   // 需要改进
+                                    };
+                                    (text, color)
+                                }
+                                None => ("-".to_string(), theme.muted_foreground),
+                            };
+
+                            // 是否有复杂度详情可显示
+                            let has_complexity_detail = file.complexity.as_ref()
+                                .map(|c| !c.functions.is_empty())
+                                .unwrap_or(false);
+
                             let mut row = h_flex()
                                 .gap_2()
                                 .p_2()
@@ -943,7 +1126,6 @@ impl LocToolView {
                                 .border_color(theme.border)
                                 .cursor_pointer();
 
-                            // 添加点击事件
                             let file_path = file.path.clone();
                             row = row.on_mouse_down(
                                 gpui::MouseButton::Left,
@@ -952,14 +1134,11 @@ impl LocToolView {
                                 }),
                             );
 
-                            // 根据选择状态设置不同的背景和边框
-                            if is_selected {
-                                row = row.bg(theme.primary.opacity(0.2));
-                            } else {
-                                row = row.bg(bg);
-                            }
+                            row = row.bg(bg);
 
+                            // 文件路径
                             row.child(div().flex_1().text_sm().overflow_x_hidden().child(path_str))
+                                // 代码行
                                 .child(
                                     div()
                                         .w(px(80.0))
@@ -967,6 +1146,7 @@ impl LocToolView {
                                         .text_center()
                                         .child(format!("{}", file.code)),
                                 )
+                                // 注释行
                                 .child(
                                     div()
                                         .w(px(80.0))
@@ -974,6 +1154,7 @@ impl LocToolView {
                                         .text_center()
                                         .child(format!("{}", file.comments)),
                                 )
+                                // 空白行
                                 .child(
                                     div()
                                         .w(px(80.0))
@@ -981,12 +1162,41 @@ impl LocToolView {
                                         .text_center()
                                         .child(format!("{}", file.blanks)),
                                 )
+                                // 总行数
                                 .child(
                                     div()
                                         .w(px(80.0))
                                         .text_sm()
                                         .text_center()
                                         .child(format!("{}", file.total())),
+                                )
+                                // 复杂度
+                                .child(
+                                    div()
+                                        .w(px(80.0))
+                                        .text_sm()
+                                        .text_center()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(complexity_color)
+                                        .child(complexity_text),
+                                )
+                                // 详情按钮
+                                .child(
+                                    div()
+                                        .w(px(60.0))
+                                        .flex()
+                                        .justify_center()
+                                        .when(has_complexity_detail, |this| {
+                                            let file_path_btn = file.path.clone();
+                                            this.child(
+                                                Button::new(("detail", i))
+                                                    .label("详情")
+                                                    .xsmall()
+                                                    .on_click(cx.listener(move |view, _, _window, cx| {
+                                                        view.show_complexity_detail(&file_path_btn, cx);
+                                                    }))
+                                            )
+                                        }),
                                 )
                         })),
                     ),
@@ -1084,13 +1294,10 @@ impl LocToolView {
 
     fn toggle_language(&mut self, language: Language, cx: &mut Context<Self>) {
         if let Some(index) = self.selected_languages.iter().position(|&l| l == language) {
-            // 如果已经选中，则取消选择
             self.selected_languages.remove(index);
         } else {
-            // 如果未选中，则添加选择
             self.selected_languages.push(language);
         }
-        // 保存配置
         self.config.set_selected_languages(&self.selected_languages);
         if let Err(e) = self.config.save() {
             eprintln!("保存语言配置失败: {}", e);
@@ -1098,20 +1305,52 @@ impl LocToolView {
         cx.notify();
     }
 
-    /// 加载文件内容用于预览
+    /// 显示文件复杂度详情弹窗
+    fn show_complexity_detail(&mut self, file_path: &PathBuf, cx: &mut Context<Self>) {
+        // 查找该文件的复杂度信息
+        let file_loc = self.results.iter().find(|f| &f.path == file_path);
+        let complexity = match file_loc.and_then(|f| f.complexity.as_ref()) {
+            Some(c) => c.clone(),
+            None => return,
+        };
+
+        let file_path_clone = file_path.clone();
+        
+        // 打开新窗口显示复杂度详情
+        let bounds = gpui::Bounds::centered(
+            None,
+            gpui::size(gpui::px(700.0), gpui::px(500.0)),
+            cx,
+        );
+
+        let _ = cx.open_window(
+            gpui::WindowOptions {
+                window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
+                titlebar: Some(gpui::TitlebarOptions {
+                    title: Some(format!("复杂度详情 - {}", file_path.file_name().unwrap_or_default().to_string_lossy()).into()),
+                    appears_transparent: false,
+                    traffic_light_position: None,
+                }),
+                ..Default::default()
+            },
+            |window, cx| {
+                let view = cx.new(|cx| {
+                    ComplexityDetailView::new(&file_path_clone, complexity, window, cx)
+                });
+                cx.new(|cx| Root::new(view, window, cx))
+            },
+        );
+    }
+
     fn load_file_content(&mut self, file_path: &PathBuf, cx: &mut Context<Self>) {
-        // 克隆文件路径以便在异步任务中使用
         let file_path_clone = file_path.clone();
 
         cx.spawn(async move |this, cx| {
-            // 在后台加载文件内容
             let result = std::fs::read_to_string(&file_path_clone);
 
             cx.update(|cx| {
                 match result {
                     Ok(content) => {
-                        // 创建一个新窗口来显示文件预览
-                        // 配置新窗口的大小和位置
                         let bounds = gpui::Bounds::centered(
                             None,
                             gpui::size(gpui::px(800.0), gpui::px(600.0)),
@@ -1124,7 +1363,6 @@ impl LocToolView {
                                 ..Default::default()
                             },
                             |window, cx| {
-                                // 创建文件预览视图并用Root包装
                                 let view = cx.new(|cx| {
                                     FilePreviewView::new(&file_path_clone, &content, window, cx)
                                 });
@@ -1133,7 +1371,6 @@ impl LocToolView {
                         );
                     }
                     Err(e) => {
-                        // 如果文件读取失败，显示错误信息
                         let _ = this.update(cx, |view, cx| {
                             view.error_message = Some(format!("无法读取文件: {}", e));
                             cx.notify();
@@ -1147,50 +1384,39 @@ impl LocToolView {
     }
 }
 
-impl LocToolView {
-    // 处理键盘快捷键（暂时注释，等待修复gpui API调用问题）
-    /*fn handle_keyboard(&mut self, event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        // 等待修复gpui API调用问题后再实现
-    }*/
-}
-
 impl Render for LocToolView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_results = !self.results.is_empty();
         let is_scanning = self.scan_state == ScanState::Scanning;
         let theme = cx.theme();
 
-        // 根据当前主题设置不同的颜色
         let (bg_color, text_color) = match self.theme {
             Theme::Light => (
-                theme.background, // 浅色背景
-                theme.foreground, // 深色文字
+                theme.background,
+                theme.foreground,
             ),
             Theme::Dark => (
-                theme.primary,    // 使用深色背景（暂时用primary颜色代替）
-                theme.background, // 使用背景色作为文字颜色
+                theme.primary,
+                theme.background,
             ),
         };
 
-        // 使用gpui-component的Scrollable组件
         v_flex()
             .size_full()
             .bg(bg_color)
             .text_color(text_color)
-            // 固定的顶部内容
             .child(self.render_header(window, cx))
             .child(self.render_error(window, cx))
-            // 可滚动的主内容区域
             .child(
                 v_flex()
                     .id("main-content-scroll")
-                    .flex_1() // 占据剩余空间
-                    .min_h_0() // 确保容器可以收缩
-                    .overflow_y_scrollbar() // 使用新版本API
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scrollbar()
                     .child(
                         v_flex()
                             .p_4()
-                            .pb_64() // 大幅增加底部padding，确保所有内容都能完全显示
+                            .pb_64()
                             .when(has_results, |this| {
                                 this.child(self.render_summary(window, cx))
                                     .child(self.render_results(window, cx))
