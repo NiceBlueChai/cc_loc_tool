@@ -24,6 +24,10 @@ pub struct AppConfig {
 
     /// 应用程序主题
     pub theme: Theme,
+
+    /// 是否启用复杂度分析
+    #[serde(default)]
+    pub analyze_complexity: bool,
 }
 
 impl Default for AppConfig {
@@ -45,6 +49,7 @@ impl Default for AppConfig {
                 .map(|l| l.display_name().to_string())
                 .collect(),
             theme: Theme::Light,
+            analyze_complexity: false,  // 默认关闭以提升扫描速度
         }
     }
 }

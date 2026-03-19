@@ -16,7 +16,7 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use crate::config::AppConfig;
 use crate::export::{ExportFormat, export_results};
-use crate::loc::{FileLoc, Language, LocSummary, scan_directory_with_complexity};
+use crate::loc::{FileLoc, Language, LocSummary, scan_directory_simple, scan_directory_with_complexity};
 
 use super::state::{ComplexityDetailState, ScanProgress, ScanState, SortColumn, SortOrder, Theme};
 
@@ -269,6 +269,8 @@ pub struct LocToolView {
     config: AppConfig,
     theme: Theme,
     complexity_detail_state: ComplexityDetailState,
+    /// 是否启用复杂度分析
+    analyze_complexity: bool,
 }
 
 impl LocToolView {
@@ -294,6 +296,7 @@ impl LocToolView {
         });
 
         let theme = config.theme;
+        let analyze_complexity = config.analyze_complexity;
 
         Self {
             selected_path: config.last_selected_path.clone(),
@@ -313,6 +316,7 @@ impl LocToolView {
             config,
             theme,
             complexity_detail_state: ComplexityDetailState::default(),
+            analyze_complexity,
         }
     }
 
@@ -389,6 +393,7 @@ impl LocToolView {
         }
 
         let selected_languages = self.selected_languages.clone();
+        let analyze_complexity = self.analyze_complexity;
 
         cx.spawn(async move |this, cx| {
             let path_clone = path.clone();
@@ -398,9 +403,10 @@ impl LocToolView {
 
             let (progress_sender, _progress_receiver) = std::sync::mpsc::channel();
 
-            // 使用带复杂度分析的扫描函数
-            let result = cx
-                .background_spawn(async move {
+            // 根据开关选择扫描函数
+            let result = if analyze_complexity {
+                // 使用带复杂度分析的扫描函数
+                cx.background_spawn(async move {
                     scan_directory_with_complexity(
                         &path_clone,
                         &exclude_dirs_clone,
@@ -411,14 +417,38 @@ impl LocToolView {
                         }),
                     )
                 })
-                .await;
+                .await
+                .map(|files| {
+                    // 使用带复杂度统计的汇总函数
+                    (files, true)
+                })
+            } else {
+                // 使用简单扫描函数（更快）
+                cx.background_spawn(async move {
+                    scan_directory_simple(
+                        &path_clone,
+                        &exclude_dirs_clone,
+                        &exclude_files_clone,
+                        &selected_languages_clone,
+                    )
+                })
+                .await
+                .map(|files| {
+                    // 使用简单汇总函数
+                    (files, false)
+                })
+            };
 
             cx.update(|cx| {
                 this.update(cx, |view, cx| {
                     match result {
-                        Ok(files) => {
-                            // 使用带复杂度统计的汇总函数
-                            view.summary = LocSummary::from_files_with_complexity(&files);
+                        Ok((files, with_complexity)) => {
+                            // 根据扫描类型选择汇总方式
+                            view.summary = if with_complexity {
+                                LocSummary::from_files_with_complexity(&files)
+                            } else {
+                                LocSummary::from_files(&files)
+                            };
                             view.results = files;
                             view.scan_state = ScanState::Done;
                         }
@@ -654,6 +684,40 @@ impl LocToolView {
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
                             .child("(支持 * 通配符)"),
+                    ),
+            )
+            // 复杂度分析开关
+            .child(
+                h_flex()
+                    .gap_3()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .w(px(80.0))
+                            .min_w(px(80.0))
+                            .child("复杂度分析"),
+                    )
+                    .child(
+                        Button::new("toggle-complexity")
+                            .label(if self.analyze_complexity { "✓ 启用" } else { "☐ 禁用" })
+                            .disabled(is_scanning)
+                            .when(self.analyze_complexity, |this| this.primary())
+                            .on_click(cx.listener(|view, _, _window, cx| {
+                                view.analyze_complexity = !view.analyze_complexity;
+                                view.config.analyze_complexity = view.analyze_complexity;
+                                if let Err(e) = view.config.save() {
+                                    eprintln!("保存配置失败: {}", e);
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("(启用可能增加扫描时间)"),
                     ),
             )
     }
