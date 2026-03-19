@@ -1,9 +1,11 @@
 use gpui::{
     Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, prelude::*, px,
+    SharedString,
 };
 use gpui_component::{
     Disableable,
     button::{Button, ButtonVariants},
+    clipboard::Clipboard,
     h_flex,
     input::{Input, InputState},
     scroll::ScrollableElement,
@@ -201,17 +203,25 @@ impl Render for ComplexityDetailView {
                                     (theme.danger, "需改进", theme.danger)
                                 };
 
+                                // 生成函数签名
+                                let signature = if func.parameter_count > 0 {
+                                    format!("{}({} params)", func.name, func.parameter_count)
+                                } else {
+                                    format!("{}()", func.name)
+                                };
+
                                 h_flex()
                                     .gap_2()
                                     .p_2()
                                     .bg(bg)
                                     .rounded(theme.radius)
                                     .text_sm()
+                                    .items_center()
                                     .child(
-                                        div()
-                                            .w(px(200.0))
-                                            .overflow_x_hidden()
-                                            .child(func.name.clone())
+                                        // 使用 Clipboard 组件，点击函数名可复制到剪贴板
+                                        // 使用静态 ID 前缀避免生命周期问题
+                                        Clipboard::new(("copy-func", i))
+                                            .value(SharedString::from(signature))
                                     )
                                     .child(
                                         div()
