@@ -1,6 +1,7 @@
 use anyhow::Result;
 use rayon::prelude::*;
 use std::collections::HashSet;
+use std::path::Path;
 use walkdir::WalkDir;
 
 use super::counter::{FileLoc, count_file, count_file_with_complexity};
@@ -56,13 +57,13 @@ fn matches_pattern(pattern: &str, text: &str) -> bool {
 
 /// Walk directory and count all supported files
 pub fn scan_directory(
-    root: &std::path::Path,
+    root: &Path,
     exclude_dirs: &HashSet<String>,
     exclude_files: &[String],
     languages: &[Language],
     progress_callback: Option<&dyn Fn(usize, usize)>,
 ) -> Result<Vec<FileLoc>> {
-    // 收集所有符合条件的文件路径
+    // 收集所有符合条件的文件路径（使用引用避免复制）
     let files: Vec<_> = WalkDir::new(root)
         .follow_links(false)
         .into_iter()
@@ -90,15 +91,15 @@ pub fn scan_directory(
                 return false;
             }
 
-            // 检查是否需要排除
-            let file_name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-
-            !exclude_files
-                .iter()
-                .any(|pattern| matches_pattern(pattern, &file_name))
+            // 检查是否需要排除（优化：直接使用OsStr比较，避免创建String）
+            if let Some(file_name) = path.file_name() {
+                let file_name_str = file_name.to_string_lossy();
+                !exclude_files
+                    .iter()
+                    .any(|pattern| matches_pattern(pattern, &file_name_str))
+            } else {
+                false
+            }
         })
         .map(|entry| entry.path().to_path_buf())
         .collect();
@@ -142,7 +143,7 @@ pub fn scan_directory_simple(
 
 /// Walk directory and count all supported files with complexity analysis
 pub fn scan_directory_with_complexity(
-    root: &std::path::Path,
+    root: &Path,
     exclude_dirs: &HashSet<String>,
     exclude_files: &[String],
     languages: &[Language],
@@ -173,14 +174,15 @@ pub fn scan_directory_with_complexity(
                 return false;
             }
 
-            let file_name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-
-            !exclude_files
-                .iter()
-                .any(|pattern| matches_pattern(pattern, &file_name))
+            // 优化：直接使用OsStr比较，避免创建String
+            if let Some(file_name) = path.file_name() {
+                let file_name_str = file_name.to_string_lossy();
+                !exclude_files
+                    .iter()
+                    .any(|pattern| matches_pattern(pattern, &file_name_str))
+            } else {
+                false
+            }
         })
         .map(|entry| entry.path().to_path_buf())
         .collect();
