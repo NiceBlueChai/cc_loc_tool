@@ -16,6 +16,9 @@ pub fn analyze_file_complexity(
     path: &PathBuf,
     language: Language,
 ) -> Option<metrics::FileComplexity> {
+    // 预先收集行，避免重复遍历
+    let lines: Vec<&str> = content.lines().collect();
+    
     // 提取函数
     let functions = extract_functions(content, language);
     
@@ -24,12 +27,12 @@ pub fn analyze_file_complexity(
         return None;
     }
     
-    // 计算每个函数的圈复杂度
+    // 计算每个函数的圈复杂度（优化：直接使用行范围，不创建新字符串）
     let functions_with_complexity: Vec<FunctionStats> = functions
         .into_iter()
         .map(|func| {
-            let func_content = extract_function_content(content, &func);
-            let cyclomatic_stats = calculate_cyclomatic_complexity(&func_content, language);
+            // 直接使用行范围计算复杂度，避免字符串分配
+            let cyclomatic_stats = calculate_cyclomatic_complexity_from_lines(&lines, &func, language);
             FunctionStats {
                 name: func.name,
                 start_line: func.start_line,
@@ -69,17 +72,45 @@ pub fn analyze_file_complexity(
     })
 }
 
-/// 从源代码中提取函数内容
-fn extract_function_content(source: &str, func: &FunctionStats) -> String {
-    let lines: Vec<&str> = source.lines().collect();
+/// 从行数组计算函数的圈复杂度（避免字符串分配）
+fn calculate_cyclomatic_complexity_from_lines(
+    lines: &[&str],
+    func: &FunctionStats,
+    language: Language,
+) -> CyclomaticStats {
     if func.start_line == 0 || func.end_line == 0 || func.start_line > func.end_line {
-        return String::new();
+        return CyclomaticStats::default();
     }
     
     let start_idx = func.start_line.saturating_sub(1);
     let end_idx = func.end_line.min(lines.len());
     
-    lines[start_idx..end_idx].join("\n")
+    // 直接遍历行，不创建新字符串
+    let mut stats = CyclomaticStats::default();
+    let mut current_depth = 0usize;
+    let mut max_depth = 0usize;
+    
+    for line in &lines[start_idx..end_idx] {
+        // 逐行计算复杂度
+        let line_stats = calculate_cyclomatic_complexity(line, language);
+        stats.decision_points += line_stats.decision_points;
+        
+        // 计算嵌套深度（需要跟踪整个函数体）
+        for c in line.chars() {
+            if c == '{' {
+                current_depth += 1;
+                if current_depth > max_depth {
+                    max_depth = current_depth;
+                }
+            } else if c == '}' {
+                current_depth = current_depth.saturating_sub(1);
+            }
+        }
+    }
+    
+    stats.complexity = 1 + stats.decision_points;
+    stats.nesting_depth = max_depth;
+    stats
 }
 
 /// 从汇总的文件复杂度数据计算总体复杂度统计
