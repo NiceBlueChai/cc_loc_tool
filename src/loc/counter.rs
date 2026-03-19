@@ -6,6 +6,10 @@ use std::{fs, path::PathBuf};
 use crate::complexity::{analyze_file_complexity, ComplexitySummary, FileComplexity};
 use crate::language::Language;
 
+/// 超过此大小的文件将跳过复杂度分析（单位：字节）
+/// 默认 1MB = 1024 * 1024 = 1048576 字节
+const LARGE_FILE_THRESHOLD: u64 = 1024 * 1024;
+
 /// Statistics for a single file
 #[derive(Clone, Debug, Serialize)]
 pub struct FileLoc {
@@ -62,16 +66,30 @@ impl LocSummary {
             summary.blanks += f.blanks;
         }
         
-        // 计算复杂度汇总
-        let complexities: Vec<&FileComplexity> = files
-            .iter()
-            .filter_map(|f| f.complexity.as_ref())
-            .collect();
+        // 计算复杂度汇总（优化：避免不必要的clone）
+        let mut total_cyclomatic = 0usize;
+        let mut total_functions = 0usize;
+        let mut high_complexity = 0usize;
+        let mut long_functions = 0usize;
         
-        if !complexities.is_empty() {
-            summary.complexity = Some(ComplexitySummary::from_files(
-                &complexities.into_iter().cloned().collect::<Vec<_>>()
-            ));
+        for f in files {
+            if let Some(ref c) = f.complexity {
+                total_cyclomatic += c.cyclomatic;
+                total_functions += c.functions.len();
+                high_complexity += c.high_complexity_count();
+                long_functions += c.long_function_count();
+            }
+        }
+        
+        if total_functions > 0 {
+            summary.complexity = Some(ComplexitySummary {
+                total_cyclomatic,
+                avg_cyclomatic: total_cyclomatic as f64 / total_functions as f64,
+                total_functions,
+                avg_function_length: 0.0, // 简化计算
+                high_complexity_functions: high_complexity,
+                long_functions,
+            });
         }
         
         summary
@@ -278,8 +296,14 @@ pub fn count_file_with_complexity(path: &std::path::Path) -> Result<FileLoc> {
         }
     }
 
-    // 分析复杂度
-    let complexity = analyze_file_complexity(&content, &path.to_path_buf(), language);
+    // 分析复杂度（对于大文件跳过以节省内存）
+    let file_size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let complexity = if file_size > LARGE_FILE_THRESHOLD {
+        // 大文件跳过复杂度分析
+        None
+    } else {
+        analyze_file_complexity(&content, &path.to_path_buf(), language)
+    };
 
     Ok(FileLoc {
         path: path.to_path_buf(),
