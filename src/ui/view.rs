@@ -218,10 +218,16 @@ impl Render for ComplexityDetailView {
                                     .text_sm()
                                     .items_center()
                                     .child(
-                                        // 使用 Clipboard 组件，点击函数名可复制到剪贴板
-                                        // 使用静态 ID 前缀避免生命周期问题
+                                        // 显示函数名
+                                        div()
+                                            .w(px(160.0))
+                                            .overflow_x_hidden()
+                                            .child(func.name.clone())
+                                    )
+                                    .child(
+                                        // 复制按钮（Clipboard 组件自带复制图标）
                                         Clipboard::new(("copy-func", i))
-                                            .value(SharedString::from(signature))
+                                            .value(SharedString::from(signature.clone()))
                                     )
                                     .child(
                                         div()
