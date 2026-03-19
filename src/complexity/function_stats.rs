@@ -216,6 +216,12 @@ fn try_parse_function_c_style(lines: &[&str], start_idx: usize) -> Option<Functi
         return None;
     }
     
+    // 排除以分号结尾的行（函数调用特征）
+    // 函数定义不会以分号结尾（除非是纯声明，但我们不统计声明）
+    if line.ends_with(';') {
+        return None;
+    }
+    
     // 排除控制语句
     let control_keywords = [
         "if(", "if (", "while(", "while (", "for(", "for (",
@@ -842,6 +848,21 @@ void test() {
         let functions = extract_functions_c_style(code);
         assert_eq!(functions.len(), 1);
         assert_eq!(functions[0].name, "test");
+    }
+    
+    #[test]
+    fn test_exclude_function_call_with_semicolon() {
+        let code = r#"
+void process() {
+    emit signalZhuanjiShow(false);
+    doSomething();
+    obj->method();
+}
+"#;
+        let functions = extract_functions_c_style(code);
+        // 只应该识别 process 函数
+        assert_eq!(functions.len(), 1);
+        assert_eq!(functions[0].name, "process");
     }
     
     #[test]
