@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use super::function_stats::FunctionStats;
@@ -102,7 +102,7 @@ impl FileComplexity {
 }
 
 /// 复杂度汇总统计
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ComplexitySummary {
     /// 总圈复杂度
     pub total_cyclomatic: usize,

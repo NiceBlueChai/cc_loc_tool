@@ -1,6 +1,6 @@
 use anyhow::Result;
 use encoding_rs::{GBK, UTF_8};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::{self, BufRead, BufReader},
@@ -33,7 +33,7 @@ impl FileLoc {
 }
 
 /// Aggregate statistics
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LocSummary {
     pub files: usize,
     pub code: usize,
