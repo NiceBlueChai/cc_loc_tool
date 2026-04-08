@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::export::{ExportFormat, export_results};
-use crate::loc::{Language, scan_directory_simple, scan_directory_with_complexity, LocSummary};
+use crate::loc::{Language, LocSummary, scan_directory_simple, scan_directory_with_complexity};
 
 /// CLI 配置选项
 #[derive(Debug)]
@@ -150,8 +150,8 @@ pub fn parse_args() -> Result<CliOptions> {
 
 /// 打印帮助信息
 fn print_help() {
-    println!("C/C++ 代码行统计工具 (cc_loc_tool) v0.1.0");
-    println!("用法: cc_loc_tool [OPTIONS] DIRECTORY");
+    println!("C/C++ 代码行统计工具 (cc_loc_cli) v0.1.0");
+    println!("用法: cc_loc_cli [OPTIONS] DIRECTORY");
     println!();
     println!("选项:");
     println!("  -d, --directory DIRECTORY    要扫描的目录路径");
@@ -166,10 +166,10 @@ fn print_help() {
     println!("  -v, --version                显示版本信息");
     println!();
     println!("示例:");
-    println!("  cc_loc_tool ./my_project");
-    println!("  cc_loc_tool -d ./my_project -e build,target -l C++,Java");
-    println!("  cc_loc_tool ./my_project -o results.json -t json");
-    println!("  cc_loc_tool ./my_project -c -o complexity.html");
+    println!("  cc_loc_cli ./my_project");
+    println!("  cc_loc_cli -d ./my_project -e build,target -l C++,Java");
+    println!("  cc_loc_cli ./my_project -o results.json -t json");
+    println!("  cc_loc_cli ./my_project -c -o complexity.html");
 }
 
 /// 运行 CLI 模式
@@ -187,7 +187,14 @@ pub fn run_cli() -> Result<()> {
             .map(|l| l.display_name())
             .collect::<Vec<_>>()
     );
-    println!("复杂度分析: {}", if options.analyze_complexity { "启用" } else { "禁用" });
+    println!(
+        "复杂度分析: {}",
+        if options.analyze_complexity {
+            "启用"
+        } else {
+            "禁用"
+        }
+    );
     println!();
 
     // 转换排除目录为 HashSet
@@ -223,7 +230,7 @@ pub fn run_cli() -> Result<()> {
     println!("注释行: {}", summary.comments);
     println!("空白行: {}", summary.blanks);
     println!("总行数: {}", summary.total());
-    
+
     // 如果启用了复杂度分析，打印复杂度统计
     if options.analyze_complexity {
         if let Some(ref c) = summary.complexity {
