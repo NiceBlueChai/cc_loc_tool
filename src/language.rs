@@ -78,3 +78,31 @@ pub fn is_supported_file_with_custom(
     let ext = ext.to_string_lossy().to_lowercase();
     custom_extensions.iter().any(|custom| custom == &ext)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn custom_extension_is_matched_in_addition_to_builtin_languages() {
+        let languages = vec![Language::Cpp];
+        let custom_extensions = vec!["tpp".to_string()];
+
+        assert!(is_supported_file_with_custom(
+            Path::new("sample.tpp"),
+            &languages,
+            &custom_extensions
+        ));
+        assert!(is_supported_file_with_custom(
+            Path::new("sample.cpp"),
+            &languages,
+            &custom_extensions
+        ));
+        assert!(!is_supported_file_with_custom(
+            Path::new("sample.txt"),
+            &languages,
+            &custom_extensions
+        ));
+    }
+}

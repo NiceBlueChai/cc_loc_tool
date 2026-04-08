@@ -35,6 +35,7 @@ impl ComplexityLevel {
 }
 
 /// 函数长度等级
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub enum FunctionLengthLevel {
     /// 短函数（1-20行）
@@ -45,6 +46,7 @@ pub enum FunctionLengthLevel {
     Long,
 }
 
+#[allow(dead_code)]
 impl FunctionLengthLevel {
     /// 根据行数判断等级
     pub fn from_lines(lines: usize) -> Self {
@@ -181,6 +183,7 @@ impl ComplexitySummary {
 }
 
 /// 代码质量报告
+#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize)]
 pub struct QualityReport {
     /// 复杂度汇总
@@ -190,6 +193,7 @@ pub struct QualityReport {
 }
 
 /// 需要关注的函数
+#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize)]
 pub struct AttentionFunction {
     /// 文件路径
@@ -206,6 +210,7 @@ pub struct AttentionFunction {
     pub issues: Vec<String>,
 }
 
+#[allow(dead_code)]
 impl QualityReport {
     /// 从文件复杂度列表生成质量报告
     pub fn from_files(files: &[FileComplexity]) -> Self {

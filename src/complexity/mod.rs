@@ -6,14 +6,14 @@ pub use cyclomatic::{CyclomaticStats, calculate_cyclomatic_complexity};
 pub use function_stats::{FunctionStats, extract_functions};
 pub use metrics::{ComplexityLevel, ComplexitySummary, FileComplexity};
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use crate::language::Language;
 
 /// 分析单个文件的复杂度
 pub fn analyze_file_complexity(
     content: &str,
-    path: &PathBuf,
+    path: &Path,
     language: Language,
 ) -> Option<metrics::FileComplexity> {
     // 预先收集行，避免重复遍历
@@ -71,7 +71,7 @@ pub fn analyze_file_complexity(
     };
 
     Some(metrics::FileComplexity {
-        path: path.clone(),
+        path: path.to_path_buf(),
         cyclomatic: total_cyclomatic,
         avg_cyclomatic,
         max_cyclomatic,

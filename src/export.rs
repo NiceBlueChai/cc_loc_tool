@@ -66,7 +66,7 @@ fn export_to_csv(path: &Path, summary: &LocSummary, files: &[FileLoc]) -> Result
     let mut writer = csv::WriterBuilder::new().from_path(path)?;
 
     // 写入文件统计数据（包含复杂度列）
-    writer.write_record(&[
+    writer.write_record([
         "文件路径",
         "代码行",
         "注释行",
@@ -83,7 +83,7 @@ fn export_to_csv(path: &Path, summary: &LocSummary, files: &[FileLoc]) -> Result
             Some(c) => (c.max_cyclomatic.to_string(), c.functions.len().to_string()),
             None => ("-".to_string(), "-".to_string()),
         };
-        writer.write_record(&[
+        writer.write_record([
             path_str,
             file.code.to_string(),
             file.comments.to_string(),
@@ -95,7 +95,7 @@ fn export_to_csv(path: &Path, summary: &LocSummary, files: &[FileLoc]) -> Result
     }
 
     // 写入总计
-    writer.write_record(&["总计", "", "", "", "", "", ""])?;
+    writer.write_record(["总计", "", "", "", "", "", ""])?;
 
     // 为数值创建临时字符串
     let code_str = summary.code.to_string();
@@ -113,7 +113,7 @@ fn export_to_csv(path: &Path, summary: &LocSummary, files: &[FileLoc]) -> Result
         None => ("-".to_string(), "-".to_string(), "-".to_string()),
     };
 
-    writer.write_record(&[
+    writer.write_record([
         "",
         &code_str,
         &comments_str,
@@ -125,7 +125,7 @@ fn export_to_csv(path: &Path, summary: &LocSummary, files: &[FileLoc]) -> Result
 
     // 如果有复杂度数据，添加额外信息行
     if summary.complexity.is_some() {
-        writer.write_record(&[
+        writer.write_record([
             "复杂度统计",
             "",
             "",
@@ -139,7 +139,7 @@ fn export_to_csv(path: &Path, summary: &LocSummary, files: &[FileLoc]) -> Result
             .as_ref()
             .map(|c| c.long_functions.to_string())
             .unwrap_or("-".to_string());
-        writer.write_record(&["", "", "", "", "", &high_complexity, &long_funcs])?;
+        writer.write_record(["", "", "", "", "", &high_complexity, &long_funcs])?;
     }
 
     writer.flush()?;
