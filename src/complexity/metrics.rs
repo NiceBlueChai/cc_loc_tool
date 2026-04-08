@@ -23,7 +23,7 @@ impl ComplexityLevel {
             _ => Self::Poor,
         }
     }
-    
+
     /// 获取等级名称
     pub fn name(&self) -> &'static str {
         match self {
@@ -54,7 +54,7 @@ impl FunctionLengthLevel {
             _ => Self::Long,
         }
     }
-    
+
     /// 获取等级名称
     pub fn name(&self) -> &'static str {
         match self {
@@ -89,12 +89,12 @@ impl FileComplexity {
     pub fn complexity_level(&self) -> ComplexityLevel {
         ComplexityLevel::from_complexity(self.avg_cyclomatic as usize)
     }
-    
+
     /// 获取高复杂度函数数量
     pub fn high_complexity_count(&self) -> usize {
         self.functions.iter().filter(|f| f.cyclomatic > 10).count()
     }
-    
+
     /// 获取长函数数量
     pub fn long_function_count(&self) -> usize {
         self.functions.iter().filter(|f| f.lines > 50).count()
@@ -123,7 +123,7 @@ impl ComplexitySummary {
     pub fn complexity_level(&self) -> ComplexityLevel {
         ComplexityLevel::from_complexity(self.avg_cyclomatic as usize)
     }
-    
+
     /// 获取高复杂度函数比例
     pub fn high_complexity_ratio(&self) -> f64 {
         if self.total_functions == 0 {
@@ -131,7 +131,7 @@ impl ComplexitySummary {
         }
         self.high_complexity_functions as f64 / self.total_functions as f64
     }
-    
+
     /// 获取长函数比例
     pub fn long_function_ratio(&self) -> f64 {
         if self.total_functions == 0 {
@@ -139,44 +139,36 @@ impl ComplexitySummary {
         }
         self.long_functions as f64 / self.total_functions as f64
     }
-    
+
     /// 从文件复杂度列表计算汇总
     pub fn from_files(files: &[FileComplexity]) -> Self {
         if files.is_empty() {
             return Self::default();
         }
-        
+
         let total_cyclomatic: usize = files.iter().map(|f| f.cyclomatic).sum();
         let total_functions: usize = files.iter().map(|f| f.functions.len()).sum();
-        
-        let all_functions: Vec<&FunctionStats> = files
-            .iter()
-            .flat_map(|f| f.functions.iter())
-            .collect();
-        
+
+        let all_functions: Vec<&FunctionStats> =
+            files.iter().flat_map(|f| f.functions.iter()).collect();
+
         let avg_cyclomatic = if total_functions > 0 {
             total_cyclomatic as f64 / total_functions as f64
         } else {
             0.0
         };
-        
+
         let total_function_lines: usize = all_functions.iter().map(|f| f.lines).sum();
         let avg_function_length = if total_functions > 0 {
             total_function_lines as f64 / total_functions as f64
         } else {
             0.0
         };
-        
-        let high_complexity_functions = all_functions
-            .iter()
-            .filter(|f| f.cyclomatic > 10)
-            .count();
-        
-        let long_functions = all_functions
-            .iter()
-            .filter(|f| f.lines > 50)
-            .count();
-        
+
+        let high_complexity_functions = all_functions.iter().filter(|f| f.cyclomatic > 10).count();
+
+        let long_functions = all_functions.iter().filter(|f| f.lines > 50).count();
+
         Self {
             total_cyclomatic,
             avg_cyclomatic,
@@ -218,20 +210,20 @@ impl QualityReport {
     /// 从文件复杂度列表生成质量报告
     pub fn from_files(files: &[FileComplexity]) -> Self {
         let summary = ComplexitySummary::from_files(files);
-        
+
         let attention_functions: Vec<AttentionFunction> = files
             .iter()
             .flat_map(|file| {
                 file.functions.iter().filter_map(|func| {
                     let mut issues = Vec::new();
-                    
+
                     if func.cyclomatic > 10 {
                         issues.push(format!("高圈复杂度: {}", func.cyclomatic));
                     }
                     if func.lines > 50 {
                         issues.push(format!("函数过长: {} 行", func.lines));
                     }
-                    
+
                     if issues.is_empty() {
                         None
                     } else {
@@ -247,7 +239,7 @@ impl QualityReport {
                 })
             })
             .collect();
-        
+
         Self {
             summary,
             attention_functions,

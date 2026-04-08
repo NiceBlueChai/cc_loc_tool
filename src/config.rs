@@ -49,7 +49,7 @@ impl Default for AppConfig {
                 .map(|l| l.display_name().to_string())
                 .collect(),
             theme: Theme::Light,
-            analyze_complexity: false,  // 默认关闭以提升扫描速度
+            analyze_complexity: false, // 默认关闭以提升扫描速度
         }
     }
 }
