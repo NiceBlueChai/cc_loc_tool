@@ -292,6 +292,7 @@ pub struct LocToolView {
     selected_path: Option<PathBuf>,
     exclude_input: Entity<InputState>,
     exclude_files_input: Entity<InputState>,
+    custom_extensions_input: Entity<InputState>,
     scan_state: ScanState,
     scan_progress: ScanProgress,
     results: Vec<FileLoc>,
@@ -335,6 +336,12 @@ impl LocToolView {
                 .placeholder("排除文件，支持通配符 * ，如: moc_*,*.generated.cpp")
         });
 
+        let custom_extensions_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(config.custom_extensions_to_string())
+                .placeholder("自定义后缀，如: tpp, ipp, cu（可带或不带 .）")
+        });
+
         let theme = config.theme;
         let analyze_complexity = config.analyze_complexity;
 
@@ -342,6 +349,7 @@ impl LocToolView {
             selected_path: config.last_selected_path.clone(),
             exclude_input,
             exclude_files_input,
+            custom_extensions_input,
             scan_state: ScanState::Idle,
             scan_progress: ScanProgress {
                 total_files: 0,
@@ -396,6 +404,18 @@ impl LocToolView {
             return;
         };
 
+        let has_custom_extensions = !self
+            .custom_extensions_input
+            .read(cx)
+            .value()
+            .trim()
+            .is_empty();
+        if self.selected_languages.is_empty() && !has_custom_extensions {
+            self.error_message = Some("请至少选择一种语言或填写自定义后缀".into());
+            cx.notify();
+            return;
+        }
+
         self.scan_state = ScanState::Scanning;
         self.error_message = None;
         self.results.clear();
@@ -424,8 +444,17 @@ impl LocToolView {
             .collect();
         let exclude_files_arc = Arc::new(exclude_files.clone());
 
+        let custom_extensions_value = self.custom_extensions_input.read(cx).value().to_string();
+        let custom_extensions: Vec<String> = custom_extensions_value
+            .split(|c| c == ',' || c == ';')
+            .map(|s| s.trim().trim_start_matches('.').to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let custom_extensions_arc = Arc::new(custom_extensions.clone());
+
         self.config.exclude_dirs = exclude_dirs;
         self.config.exclude_files = exclude_files;
+        self.config.custom_extensions = custom_extensions;
         self.config.set_selected_languages(&self.selected_languages);
 
         if let Err(e) = self.config.save() {
@@ -439,6 +468,7 @@ impl LocToolView {
             let path_clone = path.clone();
             let exclude_dirs_clone = exclude_dirs_arc.clone();
             let exclude_files_clone = exclude_files_arc.clone();
+            let custom_extensions_clone = custom_extensions_arc.clone();
             let selected_languages_clone = selected_languages.clone();
 
             let (progress_sender, progress_receiver) = mpsc::channel();
@@ -454,6 +484,7 @@ impl LocToolView {
                         &exclude_dirs_clone,
                         &exclude_files_clone,
                         &selected_languages_clone,
+                        &custom_extensions_clone,
                         Some(&progress_callback),
                     )
                     .map(|files| (files, true))
@@ -466,6 +497,7 @@ impl LocToolView {
                         &exclude_dirs_clone,
                         &exclude_files_clone,
                         &selected_languages_clone,
+                        &custom_extensions_clone,
                         Some(&progress_callback),
                     )
                     .map(|files| (files, false))
@@ -576,6 +608,12 @@ impl LocToolView {
 
     fn render_header(&self, _window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let is_scanning = self.scan_state == ScanState::Scanning;
+        let has_custom_extensions = !self
+            .custom_extensions_input
+            .read(cx)
+            .value()
+            .trim()
+            .is_empty();
         let primary_text = self.primary_text_color(cx);
         let secondary_text = self.secondary_text_color(cx);
         let elevated_surface = self.elevated_surface_color(cx);
@@ -635,7 +673,8 @@ impl LocToolView {
                             .disabled(
                                 is_scanning
                                     || self.selected_path.is_none()
-                                    || self.selected_languages.is_empty(),
+                                    || (self.selected_languages.is_empty()
+                                        && !has_custom_extensions),
                             )
                             .on_click(cx.listener(|view, _, window, cx| {
                                 view.scan(window, cx);
@@ -749,6 +788,30 @@ impl LocToolView {
                             .text_xs()
                             .text_color(secondary_text)
                             .child("(支持 * 通配符)"),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_3()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(secondary_text)
+                            .w(px(80.0))
+                            .min_w(px(80.0))
+                            .child("自定义后缀"),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(Input::new(&self.custom_extensions_input)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(secondary_text)
+                            .child("(如: tpp, ipp, cu)"),
                     ),
             )
             // 复杂度分析开关

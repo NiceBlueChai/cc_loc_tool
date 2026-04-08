@@ -19,6 +19,10 @@ pub struct AppConfig {
     /// 排除的文件模式列表
     pub exclude_files: Vec<String>,
 
+    /// 自定义扫描文件扩展名（不带 .）
+    #[serde(default)]
+    pub custom_extensions: Vec<String>,
+
     /// 选中的编程语言列表
     pub selected_languages: Vec<String>,
 
@@ -44,6 +48,7 @@ impl Default for AppConfig {
                 "moc_*".to_string(),
                 "qrc_*".to_string(),
             ],
+            custom_extensions: Vec::new(),
             selected_languages: Language::all()
                 .iter()
                 .map(|l| l.display_name().to_string())
@@ -76,6 +81,13 @@ impl AppConfig {
             config
                 .selected_languages
                 .retain(|lang| Language::all().iter().any(|l| l.display_name() == lang));
+
+            config.custom_extensions = config
+                .custom_extensions
+                .iter()
+                .map(|v| v.trim().trim_start_matches('.').to_lowercase())
+                .filter(|v| !v.is_empty())
+                .collect();
 
             Ok(config)
         } else {
@@ -149,6 +161,20 @@ impl AppConfig {
             .split(|c| c == ',' || c == ';')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
+            .collect();
+    }
+
+    /// 将自定义扩展名转换为字符串（用于 UI 显示）
+    pub fn custom_extensions_to_string(&self) -> String {
+        self.custom_extensions.join(", ")
+    }
+
+    /// 将字符串解析为自定义扩展名列表
+    pub fn custom_extensions_from_string(&mut self, s: &str) {
+        self.custom_extensions = s
+            .split(|c| c == ',' || c == ';')
+            .map(|v| v.trim().trim_start_matches('.').to_lowercase())
+            .filter(|v| !v.is_empty())
             .collect();
     }
 }

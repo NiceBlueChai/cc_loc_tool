@@ -60,3 +60,21 @@ impl Language {
 pub fn is_supported_file(path: &std::path::Path, languages: &[Language]) -> bool {
     languages.iter().any(|lang| lang.matches_file(path))
 }
+
+/// 检查文件是否被语言列表或自定义扩展名匹配
+pub fn is_supported_file_with_custom(
+    path: &std::path::Path,
+    languages: &[Language],
+    custom_extensions: &[String],
+) -> bool {
+    if is_supported_file(path, languages) {
+        return true;
+    }
+
+    let Some(ext) = path.extension() else {
+        return false;
+    };
+
+    let ext = ext.to_string_lossy().to_lowercase();
+    custom_extensions.iter().any(|custom| custom == &ext)
+}

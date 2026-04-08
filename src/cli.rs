@@ -12,6 +12,7 @@ pub struct CliOptions {
     pub exclude_dirs: Vec<String>,
     pub exclude_files: Vec<String>,
     pub languages: Vec<Language>,
+    pub custom_extensions: Vec<String>,
     pub export_path: Option<PathBuf>,
     pub export_format: Option<ExportFormat>,
     /// 是否启用复杂度分析
@@ -25,6 +26,7 @@ impl Default for CliOptions {
             exclude_dirs: Vec::new(),
             exclude_files: Vec::new(),
             languages: Language::all().to_vec(),
+            custom_extensions: Vec::new(),
             export_path: None,
             export_format: None,
             analyze_complexity: false,
@@ -89,6 +91,17 @@ pub fn parse_args() -> Result<CliOptions> {
                     }
                 } else {
                     anyhow::bail!("--languages 选项需要一个语言列表参数");
+                }
+            }
+            "-x" | "--extensions" => {
+                if let Some(exts) = args.next() {
+                    options.custom_extensions = exts
+                        .split(|c| c == ',' || c == ';')
+                        .map(|s| s.trim().trim_start_matches('.').to_lowercase())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                } else {
+                    anyhow::bail!("--extensions 选项需要一个扩展名列表参数");
                 }
             }
             "-o" | "--output" => {
@@ -159,6 +172,7 @@ fn print_help() {
     println!("  -f, --exclude-files FILES    要排除的文件模式，用逗号或分号分隔");
     println!("  -l, --languages LANGS        要扫描的编程语言，用逗号或分号分隔");
     println!("                               支持的语言: C, C++, Java, Python, Go, Rust");
+    println!("  -x, --extensions EXTS        自定义扫描后缀（如: tpp,ipp,cu）");
     println!("  -c, --complexity            启用代码复杂度分析");
     println!("  -o, --output PATH            导出结果的文件路径");
     println!("  -t, --format FORMAT          导出格式: csv, json, html");
@@ -168,6 +182,7 @@ fn print_help() {
     println!("示例:");
     println!("  cc_loc_cli ./my_project");
     println!("  cc_loc_cli -d ./my_project -e build,target -l C++,Java");
+    println!("  cc_loc_cli ./my_project -x tpp,ipp,cu");
     println!("  cc_loc_cli ./my_project -o results.json -t json");
     println!("  cc_loc_cli ./my_project -c -o complexity.html");
 }
@@ -187,6 +202,7 @@ pub fn run_cli() -> Result<()> {
             .map(|l| l.display_name())
             .collect::<Vec<_>>()
     );
+    println!("自定义后缀: {:?}", options.custom_extensions);
     println!(
         "复杂度分析: {}",
         if options.analyze_complexity {
@@ -210,6 +226,7 @@ pub fn run_cli() -> Result<()> {
             &exclude_dirs,
             &options.exclude_files,
             &options.languages,
+            &options.custom_extensions,
             None,
         )?;
         summary = LocSummary::from_files_with_complexity(&results);
@@ -220,6 +237,7 @@ pub fn run_cli() -> Result<()> {
             &exclude_dirs,
             &options.exclude_files,
             &options.languages,
+            &options.custom_extensions,
         )?;
         summary = LocSummary::from_files(&results);
     }

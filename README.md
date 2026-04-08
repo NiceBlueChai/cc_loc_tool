@@ -11,6 +11,7 @@
 - 🎨 **友好界面**：使用现代化 GUI 框架，直观展示统计结果
 - 🌐 **编码支持**：自动识别 UTF-8 和 GBK 编码的文件
 - 🌍 **多语言支持**：支持 C, C++, Java, Python, Go, Rust 等多种编程语言
+- 🧩 **文件类型自定义**：支持按扩展名自定义额外扫描文件类型
 - 💾 **配置保存**：自动保存和加载用户设置（目录路径、排除规则、语言选择）
 - 📤 **导出功能**：支持导出统计结果到 CSV, JSON, HTML 格式
 - 🖥️ **命令行界面**：提供 CLI 版本，支持批量处理和自动化
@@ -118,6 +119,9 @@ cc_loc_cli -d ./my_project -e build,target -f moc_*,*.generated.cpp
 # 仅统计特定语言
 cc_loc_cli -d ./my_project -l C++,Java,Python
 
+# 自定义额外文件扩展名
+cc_loc_cli -d ./my_project -x tpp,ipp,cu
+
 # 导出结果到文件
 cc_loc_cli -d ./my_project -o results.csv -t csv
 
@@ -130,6 +134,7 @@ cc_loc_cli --help
 - `-e, --exclude-dirs`：要排除的目录列表，用逗号或分号分隔
 - `-f, --exclude-files`：要排除的文件模式，用逗号或分号分隔
 - `-l, --languages`：要扫描的编程语言，用逗号或分号分隔（支持：C, C++, Java, Python, Go, Rust）
+- `-x, --extensions`：自定义扫描后缀，用逗号或分号分隔（可带或不带 `.`，如 `tpp,ipp,cu`）
 - `-o, --output`：导出结果的文件路径
 - `-t, --format`：导出格式（csv, json, html）
 - `-h, --help`：显示帮助信息
