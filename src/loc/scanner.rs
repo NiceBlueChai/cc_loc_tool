@@ -10,7 +10,7 @@ use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 
 use super::counter::{FileLoc, count_file, count_file_with_complexity};
-use crate::language::{Language, is_supported_file};
+use crate::language::{Language, is_supported_file_with_custom};
 
 type ProgressCallback = dyn Fn(usize, usize) + Sync;
 const MAX_CACHE_ENTRIES: usize = 8;
@@ -21,6 +21,7 @@ struct ScanCacheKey {
     exclude_dirs: Vec<String>,
     exclude_files: Vec<String>,
     languages: Vec<String>,
+    custom_extensions: Vec<String>,
     analyze_complexity: bool,
 }
 
@@ -98,6 +99,7 @@ pub fn scan_directory(
     exclude_dirs: &HashSet<String>,
     exclude_files: &[String],
     languages: &[Language],
+    custom_extensions: &[String],
     progress_callback: Option<&ProgressCallback>,
 ) -> Result<Vec<FileLoc>> {
     scan_directory_internal(
@@ -105,6 +107,7 @@ pub fn scan_directory(
         exclude_dirs,
         exclude_files,
         languages,
+        custom_extensions,
         progress_callback,
         false,
     )
@@ -115,6 +118,7 @@ fn build_cache_key(
     exclude_dirs: &HashSet<String>,
     exclude_files: &[String],
     languages: &[Language],
+    custom_extensions: &[String],
     analyze_complexity: bool,
 ) -> ScanCacheKey {
     let root = root
@@ -135,11 +139,19 @@ fn build_cache_key(
         .collect();
     languages.sort();
 
+    let mut custom_extensions: Vec<String> = custom_extensions
+        .iter()
+        .map(|s| s.trim().trim_start_matches('.').to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    custom_extensions.sort();
+
     ScanCacheKey {
         root,
         exclude_dirs,
         exclude_files,
         languages,
+        custom_extensions,
         analyze_complexity,
     }
 }
@@ -149,6 +161,7 @@ fn collect_files(
     exclude_dirs: &HashSet<String>,
     exclude_files: &[String],
     languages: &[Language],
+    custom_extensions: &[String],
 ) -> Vec<std::path::PathBuf> {
     let files: Vec<_> = WalkDir::new(root)
         .follow_links(false)
@@ -173,7 +186,7 @@ fn collect_files(
             }
 
             // 检查是否为支持的文件类型
-            if !is_supported_file(path, languages) {
+            if !is_supported_file_with_custom(path, languages, custom_extensions) {
                 return false;
             }
 
@@ -252,11 +265,18 @@ fn scan_directory_internal(
     exclude_dirs: &HashSet<String>,
     exclude_files: &[String],
     languages: &[Language],
+    custom_extensions: &[String],
     progress_callback: Option<&ProgressCallback>,
     analyze_complexity: bool,
 ) -> Result<Vec<FileLoc>> {
     // 收集所有符合条件的文件路径（使用引用避免复制）
-    let files = collect_files(root, exclude_dirs, exclude_files, languages);
+    let files = collect_files(
+        root,
+        exclude_dirs,
+        exclude_files,
+        languages,
+        custom_extensions,
+    );
 
     let total_files = files.len();
 
@@ -265,6 +285,7 @@ fn scan_directory_internal(
         exclude_dirs,
         exclude_files,
         languages,
+        custom_extensions,
         analyze_complexity,
     );
     let signature = compute_files_signature(&files);
@@ -328,8 +349,16 @@ pub fn scan_directory_simple(
     exclude_dirs: &HashSet<String>,
     exclude_files: &[String],
     languages: &[Language],
+    custom_extensions: &[String],
 ) -> Result<Vec<FileLoc>> {
-    scan_directory(root, exclude_dirs, exclude_files, languages, None)
+    scan_directory(
+        root,
+        exclude_dirs,
+        exclude_files,
+        languages,
+        custom_extensions,
+        None,
+    )
 }
 
 /// Walk directory and count all supported files with complexity analysis
@@ -338,6 +367,7 @@ pub fn scan_directory_with_complexity(
     exclude_dirs: &HashSet<String>,
     exclude_files: &[String],
     languages: &[Language],
+    custom_extensions: &[String],
     progress_callback: Option<&ProgressCallback>,
 ) -> Result<Vec<FileLoc>> {
     scan_directory_internal(
@@ -345,6 +375,7 @@ pub fn scan_directory_with_complexity(
         exclude_dirs,
         exclude_files,
         languages,
+        custom_extensions,
         progress_callback,
         true,
     )
@@ -396,14 +427,27 @@ mod tests {
         let exclude_dirs = HashSet::new();
         let exclude_files: Vec<String> = Vec::new();
         let languages = vec![Language::Cpp];
+        let custom_extensions: Vec<String> = Vec::new();
 
-        let first =
-            scan_directory_simple(&root, &exclude_dirs, &exclude_files, &languages).unwrap();
+        let first = scan_directory_simple(
+            &root,
+            &exclude_dirs,
+            &exclude_files,
+            &languages,
+            &custom_extensions,
+        )
+        .unwrap();
         assert_eq!(first.len(), 1);
         assert_eq!(cache_hits_for_tests(), 0);
 
-        let second =
-            scan_directory_simple(&root, &exclude_dirs, &exclude_files, &languages).unwrap();
+        let second = scan_directory_simple(
+            &root,
+            &exclude_dirs,
+            &exclude_files,
+            &languages,
+            &custom_extensions,
+        )
+        .unwrap();
         assert_eq!(second.len(), 1);
         assert_eq!(cache_hits_for_tests(), 1);
 
@@ -413,11 +457,45 @@ mod tests {
         )
         .unwrap();
 
-        let third =
-            scan_directory_simple(&root, &exclude_dirs, &exclude_files, &languages).unwrap();
+        let third = scan_directory_simple(
+            &root,
+            &exclude_dirs,
+            &exclude_files,
+            &languages,
+            &custom_extensions,
+        )
+        .unwrap();
         assert_eq!(third.len(), 1);
         assert_eq!(third[0].code, 4);
         assert_eq!(cache_hits_for_tests(), 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn custom_extension_is_scanned() {
+        reset_cache_for_tests();
+
+        let root = make_temp_dir();
+        let file_path = root.join("custom.tpp");
+        fs::write(&file_path, "int main() {\n    return 0;\n}\n").unwrap();
+
+        let exclude_dirs = HashSet::new();
+        let exclude_files: Vec<String> = Vec::new();
+        let languages: Vec<Language> = Vec::new();
+        let custom_extensions = vec!["tpp".to_string()];
+
+        let results = scan_directory_simple(
+            &root,
+            &exclude_dirs,
+            &exclude_files,
+            &languages,
+            &custom_extensions,
+        )
+        .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].code, 3);
 
         let _ = fs::remove_dir_all(root);
     }
