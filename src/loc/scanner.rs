@@ -2,10 +2,13 @@ use anyhow::Result;
 use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use walkdir::WalkDir;
 
 use super::counter::{FileLoc, count_file, count_file_with_complexity};
 use crate::language::{Language, is_supported_file};
+
+type ProgressCallback = dyn Fn(usize, usize) + Sync;
 
 /// Simple wildcard pattern matching (* matches any characters)
 fn matches_pattern(pattern: &str, text: &str) -> bool {
@@ -61,7 +64,7 @@ pub fn scan_directory(
     exclude_dirs: &HashSet<String>,
     exclude_files: &[String],
     languages: &[Language],
-    progress_callback: Option<&dyn Fn(usize, usize)>,
+    progress_callback: Option<&ProgressCallback>,
 ) -> Result<Vec<FileLoc>> {
     // 收集所有符合条件的文件路径（使用引用避免复制）
     let files: Vec<_> = WalkDir::new(root)
@@ -111,15 +114,26 @@ pub fn scan_directory(
         callback(0, total_files);
     }
 
+    let processed = AtomicUsize::new(0);
+
     // 并行处理所有文件
     let results: Vec<FileLoc> = files
         .par_iter() // 并行迭代器
-        .filter_map(|path| match count_file(path) {
-            Ok(loc) => Some(loc),
-            Err(e) => {
-                eprintln!("Error reading {:?}: {}", path, e);
-                None
+        .filter_map(|path| {
+            let result = match count_file(path) {
+                Ok(loc) => Some(loc),
+                Err(e) => {
+                    eprintln!("Error reading {:?}: {}", path, e);
+                    None
+                }
+            };
+
+            if let Some(callback) = progress_callback {
+                let current = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                callback(current, total_files);
             }
+
+            result
         })
         .collect(); // 收集结果
 
@@ -147,7 +161,7 @@ pub fn scan_directory_with_complexity(
     exclude_dirs: &HashSet<String>,
     exclude_files: &[String],
     languages: &[Language],
-    progress_callback: Option<&dyn Fn(usize, usize)>,
+    progress_callback: Option<&ProgressCallback>,
 ) -> Result<Vec<FileLoc>> {
     // 收集所有符合条件的文件路径
     let files: Vec<_> = WalkDir::new(root)
@@ -193,15 +207,26 @@ pub fn scan_directory_with_complexity(
         callback(0, total_files);
     }
 
+    let processed = AtomicUsize::new(0);
+
     // 并行处理所有文件，包含复杂度分析
     let results: Vec<FileLoc> = files
         .par_iter()
-        .filter_map(|path| match count_file_with_complexity(path) {
-            Ok(loc) => Some(loc),
-            Err(e) => {
-                eprintln!("Error reading {:?}: {}", path, e);
-                None
+        .filter_map(|path| {
+            let result = match count_file_with_complexity(path) {
+                Ok(loc) => Some(loc),
+                Err(e) => {
+                    eprintln!("Error reading {:?}: {}", path, e);
+                    None
+                }
+            };
+
+            if let Some(callback) = progress_callback {
+                let current = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                callback(current, total_files);
             }
+
+            result
         })
         .collect();
 
