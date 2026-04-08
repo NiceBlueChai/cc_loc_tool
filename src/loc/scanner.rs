@@ -1,14 +1,48 @@
 use anyhow::Result;
 use rayon::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 
 use super::counter::{FileLoc, count_file, count_file_with_complexity};
 use crate::language::{Language, is_supported_file};
 
 type ProgressCallback = dyn Fn(usize, usize) + Sync;
+const MAX_CACHE_ENTRIES: usize = 8;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ScanCacheKey {
+    root: String,
+    exclude_dirs: Vec<String>,
+    exclude_files: Vec<String>,
+    languages: Vec<String>,
+    analyze_complexity: bool,
+}
+
+#[derive(Clone)]
+struct ScanCacheEntry {
+    signature: u64,
+    results: Vec<FileLoc>,
+    last_access_tick: u64,
+}
+
+static SCAN_CACHE: OnceLock<Mutex<HashMap<ScanCacheKey, ScanCacheEntry>>> = OnceLock::new();
+static CACHE_TICK: AtomicU64 = AtomicU64::new(1);
+#[cfg(test)]
+static CACHE_HITS: AtomicUsize = AtomicUsize::new(0);
+
+fn cache_store() -> &'static Mutex<HashMap<ScanCacheKey, ScanCacheEntry>> {
+    SCAN_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn next_cache_tick() -> u64 {
+    CACHE_TICK.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Simple wildcard pattern matching (* matches any characters)
 fn matches_pattern(pattern: &str, text: &str) -> bool {
@@ -66,7 +100,56 @@ pub fn scan_directory(
     languages: &[Language],
     progress_callback: Option<&ProgressCallback>,
 ) -> Result<Vec<FileLoc>> {
-    // 收集所有符合条件的文件路径（使用引用避免复制）
+    scan_directory_internal(
+        root,
+        exclude_dirs,
+        exclude_files,
+        languages,
+        progress_callback,
+        false,
+    )
+}
+
+fn build_cache_key(
+    root: &Path,
+    exclude_dirs: &HashSet<String>,
+    exclude_files: &[String],
+    languages: &[Language],
+    analyze_complexity: bool,
+) -> ScanCacheKey {
+    let root = root
+        .canonicalize()
+        .unwrap_or_else(|_| root.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+
+    let mut exclude_dirs: Vec<String> = exclude_dirs.iter().map(|s| s.to_lowercase()).collect();
+    exclude_dirs.sort();
+
+    let mut exclude_files: Vec<String> = exclude_files.iter().map(|s| s.to_lowercase()).collect();
+    exclude_files.sort();
+
+    let mut languages: Vec<String> = languages
+        .iter()
+        .map(|language| language.display_name().to_lowercase())
+        .collect();
+    languages.sort();
+
+    ScanCacheKey {
+        root,
+        exclude_dirs,
+        exclude_files,
+        languages,
+        analyze_complexity,
+    }
+}
+
+fn collect_files(
+    root: &Path,
+    exclude_dirs: &HashSet<String>,
+    exclude_files: &[String],
+    languages: &[Language],
+) -> Vec<std::path::PathBuf> {
     let files: Vec<_> = WalkDir::new(root)
         .follow_links(false)
         .into_iter()
@@ -106,12 +189,98 @@ pub fn scan_directory(
         })
         .map(|entry| entry.path().to_path_buf())
         .collect();
+    files
+}
+
+fn compute_files_signature(files: &[std::path::PathBuf]) -> Option<u64> {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+
+    for path in files {
+        path.hash(&mut hasher);
+
+        let metadata = fs::metadata(path).ok()?;
+        metadata.len().hash(&mut hasher);
+
+        let modified = metadata.modified().ok()?;
+        let timestamp_ns = modified.duration_since(UNIX_EPOCH).ok()?.as_nanos();
+        timestamp_ns.hash(&mut hasher);
+    }
+
+    Some(hasher.finish())
+}
+
+fn try_get_cached_result(cache_key: &ScanCacheKey, signature: u64) -> Option<Vec<FileLoc>> {
+    let mut cache = cache_store().lock().ok()?;
+    let entry = cache.get_mut(cache_key)?;
+    if entry.signature != signature {
+        return None;
+    }
+
+    entry.last_access_tick = next_cache_tick();
+    #[cfg(test)]
+    CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+    Some(entry.results.clone())
+}
+
+fn put_cached_result(cache_key: ScanCacheKey, signature: u64, results: Vec<FileLoc>) {
+    let Ok(mut cache) = cache_store().lock() else {
+        return;
+    };
+
+    let entry = ScanCacheEntry {
+        signature,
+        results: results.clone(),
+        last_access_tick: next_cache_tick(),
+    };
+    cache.insert(cache_key, entry);
+
+    while cache.len() > MAX_CACHE_ENTRIES {
+        if let Some(evict_key) = cache
+            .iter()
+            .min_by_key(|(_, entry)| entry.last_access_tick)
+            .map(|(key, _)| key.clone())
+        {
+            cache.remove(&evict_key);
+        } else {
+            break;
+        }
+    }
+}
+
+fn scan_directory_internal(
+    root: &Path,
+    exclude_dirs: &HashSet<String>,
+    exclude_files: &[String],
+    languages: &[Language],
+    progress_callback: Option<&ProgressCallback>,
+    analyze_complexity: bool,
+) -> Result<Vec<FileLoc>> {
+    // 收集所有符合条件的文件路径（使用引用避免复制）
+    let files = collect_files(root, exclude_dirs, exclude_files, languages);
 
     let total_files = files.len();
+
+    let cache_key = build_cache_key(
+        root,
+        exclude_dirs,
+        exclude_files,
+        languages,
+        analyze_complexity,
+    );
+    let signature = compute_files_signature(&files);
 
     // 如果有进度回调，先报告0%进度
     if let Some(callback) = progress_callback {
         callback(0, total_files);
+    }
+
+    if let Some(signature) = signature
+        && let Some(cached) = try_get_cached_result(&cache_key, signature)
+    {
+        if let Some(callback) = progress_callback {
+            callback(total_files, total_files);
+        }
+        return Ok(cached);
     }
 
     let processed = AtomicUsize::new(0);
@@ -120,7 +289,11 @@ pub fn scan_directory(
     let results: Vec<FileLoc> = files
         .par_iter() // 并行迭代器
         .filter_map(|path| {
-            let result = match count_file(path) {
+            let result = match if analyze_complexity {
+                count_file_with_complexity(path)
+            } else {
+                count_file(path)
+            } {
                 Ok(loc) => Some(loc),
                 Err(e) => {
                     eprintln!("Error reading {:?}: {}", path, e);
@@ -140,6 +313,10 @@ pub fn scan_directory(
     // 报告100%进度
     if let Some(callback) = progress_callback {
         callback(total_files, total_files);
+    }
+
+    if let Some(signature) = signature {
+        put_cached_result(cache_key, signature, results.clone());
     }
 
     Ok(results)
@@ -163,76 +340,85 @@ pub fn scan_directory_with_complexity(
     languages: &[Language],
     progress_callback: Option<&ProgressCallback>,
 ) -> Result<Vec<FileLoc>> {
-    // 收集所有符合条件的文件路径
-    let files: Vec<_> = WalkDir::new(root)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            if name.starts_with('.') {
-                return false;
-            }
-            if e.file_type().is_dir() && exclude_dirs.contains(name.as_ref()) {
-                return false;
-            }
-            true
-        })
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            let path = entry.path();
-            if !path.is_file() {
-                return false;
-            }
+    scan_directory_internal(
+        root,
+        exclude_dirs,
+        exclude_files,
+        languages,
+        progress_callback,
+        true,
+    )
+}
 
-            if !is_supported_file(path, languages) {
-                return false;
-            }
+#[cfg(test)]
+fn reset_cache_for_tests() {
+    if let Ok(mut cache) = cache_store().lock() {
+        cache.clear();
+    }
+    CACHE_HITS.store(0, Ordering::Relaxed);
+}
 
-            // 优化：直接使用OsStr比较，避免创建String
-            if let Some(file_name) = path.file_name() {
-                let file_name_str = file_name.to_string_lossy();
-                !exclude_files
-                    .iter()
-                    .any(|pattern| matches_pattern(pattern, &file_name_str))
-            } else {
-                false
-            }
-        })
-        .map(|entry| entry.path().to_path_buf())
-        .collect();
+#[cfg(test)]
+fn cache_hits_for_tests() -> usize {
+    CACHE_HITS.load(Ordering::Relaxed)
+}
 
-    let total_files = files.len();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, File};
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    if let Some(callback) = progress_callback {
-        callback(0, total_files);
+    fn make_temp_dir() -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("cc_loc_tool_cache_test_{}", timestamp));
+        fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
-    let processed = AtomicUsize::new(0);
+    #[test]
+    fn repeated_scan_uses_cache_and_file_change_invalidates_cache() {
+        reset_cache_for_tests();
 
-    // 并行处理所有文件，包含复杂度分析
-    let results: Vec<FileLoc> = files
-        .par_iter()
-        .filter_map(|path| {
-            let result = match count_file_with_complexity(path) {
-                Ok(loc) => Some(loc),
-                Err(e) => {
-                    eprintln!("Error reading {:?}: {}", path, e);
-                    None
-                }
-            };
+        let root = make_temp_dir();
+        let file_path = root.join("main.cpp");
 
-            if let Some(callback) = progress_callback {
-                let current = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                callback(current, total_files);
-            }
+        let mut file = File::create(&file_path).unwrap();
+        writeln!(file, "int main() {{").unwrap();
+        writeln!(file, "    return 0;").unwrap();
+        writeln!(file, "}}").unwrap();
 
-            result
-        })
-        .collect();
+        let exclude_dirs = HashSet::new();
+        let exclude_files: Vec<String> = Vec::new();
+        let languages = vec![Language::Cpp];
 
-    if let Some(callback) = progress_callback {
-        callback(total_files, total_files);
+        let first =
+            scan_directory_simple(&root, &exclude_dirs, &exclude_files, &languages).unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(cache_hits_for_tests(), 0);
+
+        let second =
+            scan_directory_simple(&root, &exclude_dirs, &exclude_files, &languages).unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(cache_hits_for_tests(), 1);
+
+        fs::write(
+            &file_path,
+            "int main() {\n    return 0;\n}\nint value = 1;\n",
+        )
+        .unwrap();
+
+        let third =
+            scan_directory_simple(&root, &exclude_dirs, &exclude_files, &languages).unwrap();
+        assert_eq!(third.len(), 1);
+        assert_eq!(third[0].code, 4);
+        assert_eq!(cache_hits_for_tests(), 1);
+
+        let _ = fs::remove_dir_all(root);
     }
-
-    Ok(results)
 }
