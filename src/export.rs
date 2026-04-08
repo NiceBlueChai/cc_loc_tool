@@ -66,7 +66,15 @@ fn export_to_csv(path: &Path, summary: &LocSummary, files: &[FileLoc]) -> Result
     let mut writer = csv::WriterBuilder::new().from_path(path)?;
 
     // 写入文件统计数据（包含复杂度列）
-    writer.write_record(&["文件路径", "代码行", "注释行", "空白行", "总行数", "最大复杂度", "函数数"])?;
+    writer.write_record(&[
+        "文件路径",
+        "代码行",
+        "注释行",
+        "空白行",
+        "总行数",
+        "最大复杂度",
+        "函数数",
+    ])?;
 
     for file in files {
         let path_str = file.path.to_string_lossy().to_string();
@@ -94,19 +102,43 @@ fn export_to_csv(path: &Path, summary: &LocSummary, files: &[FileLoc]) -> Result
     let comments_str = summary.comments.to_string();
     let blanks_str = summary.blanks.to_string();
     let total_str = summary.total().to_string();
-    
+
     // 复杂度汇总
     let (avg_complexity, total_functions, high_complexity) = match &summary.complexity {
-        Some(c) => (format!("{:.1}", c.avg_cyclomatic), c.total_functions.to_string(), c.high_complexity_functions.to_string()),
+        Some(c) => (
+            format!("{:.1}", c.avg_cyclomatic),
+            c.total_functions.to_string(),
+            c.high_complexity_functions.to_string(),
+        ),
         None => ("-".to_string(), "-".to_string(), "-".to_string()),
     };
 
-    writer.write_record(&["", &code_str, &comments_str, &blanks_str, &total_str, &avg_complexity, &total_functions])?;
-    
+    writer.write_record(&[
+        "",
+        &code_str,
+        &comments_str,
+        &blanks_str,
+        &total_str,
+        &avg_complexity,
+        &total_functions,
+    ])?;
+
     // 如果有复杂度数据，添加额外信息行
     if summary.complexity.is_some() {
-        writer.write_record(&["复杂度统计", "", "", "", "", "高复杂度函数", "长函数(>50行)"])?;
-        let long_funcs = summary.complexity.as_ref().map(|c| c.long_functions.to_string()).unwrap_or("-".to_string());
+        writer.write_record(&[
+            "复杂度统计",
+            "",
+            "",
+            "",
+            "",
+            "高复杂度函数",
+            "长函数(>50行)",
+        ])?;
+        let long_funcs = summary
+            .complexity
+            .as_ref()
+            .map(|c| c.long_functions.to_string())
+            .unwrap_or("-".to_string());
         writer.write_record(&["", "", "", "", "", &high_complexity, &long_funcs])?;
     }
 
@@ -145,7 +177,7 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
     let blanks_lines = summary.blanks;
     let total_lines = summary.total();
     let file_rows = generate_file_rows(files);
-    
+
     // 复杂度统计卡片
     let complexity_cards = if let Some(c) = &summary.complexity {
         format!(
@@ -167,9 +199,17 @@ fn generate_html_content(summary: &LocSummary, files: &[FileLoc]) -> String {
         </div>"#,
             c.avg_cyclomatic,
             c.total_functions,
-            if c.high_complexity_functions > 0 { "#e74c3c" } else { "#27ae60" },
+            if c.high_complexity_functions > 0 {
+                "#e74c3c"
+            } else {
+                "#27ae60"
+            },
             c.high_complexity_functions,
-            if c.long_functions > 0 { "#e74c3c" } else { "#27ae60" },
+            if c.long_functions > 0 {
+                "#e74c3c"
+            } else {
+                "#27ae60"
+            },
             c.long_functions
         )
     } else {
@@ -362,7 +402,7 @@ fn generate_file_rows(files: &[FileLoc]) -> String {
         .iter()
         .map(|file| {
             let path_str = encode_text(&file.path.to_string_lossy()).to_string();
-            
+
             // 复杂度数据和样式
             let (complexity_html, func_count) = match &file.complexity {
                 Some(c) => {
@@ -375,12 +415,12 @@ fn generate_file_rows(files: &[FileLoc]) -> String {
                     };
                     (
                         format!(r#"<span class="{}">{}</span>"#, css_class, c.max_cyclomatic),
-                        c.functions.len().to_string()
+                        c.functions.len().to_string(),
                     )
                 }
                 None => ("-".to_string(), "-".to_string()),
             };
-            
+
             format!(
                 r#"<tr>
                 <td>{path}</td>

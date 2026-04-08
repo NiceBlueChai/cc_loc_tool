@@ -21,26 +21,108 @@ pub struct FunctionStats {
 
 /// C/C++ 关键字列表（不能作为函数名）
 const CPP_KEYWORDS: &[&str] = &[
-    "alignas", "alignof", "and", "and_eq", "asm", "auto", "bitand", "bitor",
-    "bool", "break", "case", "catch", "char", "char8_t", "char16_t", "char32_t",
-    "class", "compl", "concept", "const", "consteval", "constexpr", "const_cast",
-    "continue", "co_await", "co_return", "co_yield", "decltype", "default", "delete",
-    "do", "double", "dynamic_cast", "else", "enum", "explicit", "export", "extern",
-    "false", "float", "for", "friend", "goto", "if", "inline", "int", "long",
-    "mutable", "namespace", "new", "noexcept", "not", "not_eq", "nullptr", "operator",
-    "or", "or_eq", "private", "protected", "public", "register", "reinterpret_cast",
-    "requires", "return", "short", "signed", "sizeof", "static", "static_assert",
-    "static_cast", "struct", "switch", "template", "this", "thread_local", "throw",
-    "true", "try", "typedef", "typeid", "typename", "union", "unsigned", "using",
-    "virtual", "void", "volatile", "wchar_t", "while", "xor", "xor_eq",
+    "alignas",
+    "alignof",
+    "and",
+    "and_eq",
+    "asm",
+    "auto",
+    "bitand",
+    "bitor",
+    "bool",
+    "break",
+    "case",
+    "catch",
+    "char",
+    "char8_t",
+    "char16_t",
+    "char32_t",
+    "class",
+    "compl",
+    "concept",
+    "const",
+    "consteval",
+    "constexpr",
+    "const_cast",
+    "continue",
+    "co_await",
+    "co_return",
+    "co_yield",
+    "decltype",
+    "default",
+    "delete",
+    "do",
+    "double",
+    "dynamic_cast",
+    "else",
+    "enum",
+    "explicit",
+    "export",
+    "extern",
+    "false",
+    "float",
+    "for",
+    "friend",
+    "goto",
+    "if",
+    "inline",
+    "int",
+    "long",
+    "mutable",
+    "namespace",
+    "new",
+    "noexcept",
+    "not",
+    "not_eq",
+    "nullptr",
+    "operator",
+    "or",
+    "or_eq",
+    "private",
+    "protected",
+    "public",
+    "register",
+    "reinterpret_cast",
+    "requires",
+    "return",
+    "short",
+    "signed",
+    "sizeof",
+    "static",
+    "static_assert",
+    "static_cast",
+    "struct",
+    "switch",
+    "template",
+    "this",
+    "thread_local",
+    "throw",
+    "true",
+    "try",
+    "typedef",
+    "typeid",
+    "typename",
+    "union",
+    "unsigned",
+    "using",
+    "virtual",
+    "void",
+    "volatile",
+    "wchar_t",
+    "while",
+    "xor",
+    "xor_eq",
     // C 关键字
-    "restrict", "_Bool", "_Complex", "_Imaginary",
+    "restrict",
+    "_Bool",
+    "_Complex",
+    "_Imaginary",
 ];
 
 /// C/C++ 类型关键字（可以作为返回类型）
 const CPP_TYPE_KEYWORDS: &[&str] = &[
-    "void", "int", "char", "short", "long", "float", "double", "bool", "auto",
-    "unsigned", "signed", "wchar_t", "char8_t", "char16_t", "char32_t",
+    "void", "int", "char", "short", "long", "float", "double", "bool", "auto", "unsigned",
+    "signed", "wchar_t", "char8_t", "char16_t", "char32_t",
 ];
 
 /// 从源代码中提取函数信息
@@ -58,25 +140,29 @@ pub fn extract_functions(source: &str, language: Language) -> Vec<FunctionStats>
 fn extract_functions_c_style(source: &str) -> Vec<FunctionStats> {
     let mut functions = Vec::new();
     let lines: Vec<&str> = source.lines().collect();
-    
+
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i].trim();
-        
+
         // 跳过空行和注释
-        if line.is_empty() || line.starts_with("//") || line.starts_with("/*") || line.starts_with("*") {
+        if line.is_empty()
+            || line.starts_with("//")
+            || line.starts_with("/*")
+            || line.starts_with("*")
+        {
             i += 1;
             continue;
         }
-        
+
         // 尝试匹配函数定义
         if let Some(func) = try_parse_function_c_style(&lines, i) {
             functions.push(func);
         }
-        
+
         i += 1;
     }
-    
+
     functions
 }
 
@@ -85,30 +171,30 @@ fn is_valid_function_name(name: &str) -> bool {
     if name.is_empty() {
         return false;
     }
-    
+
     // 处理类成员函数：MyClass::method 或 ::globalFunc
     // 取最后一个 :: 后面的部分作为实际函数名
     let actual_name = name.rsplit("::").next().unwrap_or(name);
-    
+
     // 检查第一个字符
     let first_char = actual_name.chars().next().unwrap();
     if !first_char.is_alphabetic() && first_char != '_' && first_char != '~' {
         return false;
     }
-    
+
     // 检查其余字符
     for c in actual_name.chars().skip(1) {
         if !c.is_alphanumeric() && c != '_' {
             return false;
         }
     }
-    
+
     // 不能是关键字
     let name_lower = actual_name.to_lowercase();
     if CPP_KEYWORDS.contains(&name_lower.as_str()) {
         return false;
     }
-    
+
     true
 }
 
@@ -117,40 +203,45 @@ fn could_be_return_type(word: &str) -> bool {
     if word.is_empty() {
         return false;
     }
-    
+
     // 常见的返回类型
     let type_keywords = CPP_TYPE_KEYWORDS;
     if type_keywords.contains(&word.to_lowercase().as_str()) {
         return true;
     }
-    
+
     // 带有指针/引用符号的类型
     let word_clean = word.trim_end_matches('*').trim_end_matches('&');
     if type_keywords.contains(&word_clean.to_lowercase().as_str()) {
         return true;
     }
-    
+
     // 自定义类型通常以大写字母开头或包含 ::
     // 如: std::string, MyClass, MyNamespace::MyClass
     if word.contains("::") {
         return true;
     }
-    
+
     // 模板类型
     if word.contains('<') && word.contains('>') {
         return true;
     }
-    
+
     // 以大写字母开头的自定义类型
-    if word.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+    if word
+        .chars()
+        .next()
+        .map(|c| c.is_uppercase())
+        .unwrap_or(false)
+    {
         return true;
     }
-    
+
     // 带有 std:: 前缀的类型
     if word.starts_with("std::") {
         return true;
     }
-    
+
     false
 }
 
@@ -166,7 +257,7 @@ fn contains_function_call_pattern(line: &str) -> bool {
             }
         }
     }
-    
+
     // 检查 . 操作符（对象成员调用）
     // 需要区分 std::string getName() 这种情况
     let paren_pos = line.find('(');
@@ -193,46 +284,46 @@ fn contains_function_call_pattern(line: &str) -> bool {
             }
         }
     }
-    
+
     // Lambda 表达式
     if line.contains("[]") || line.starts_with('[') {
         return true;
     }
-    
+
     false
 }
 
 /// 尝试解析 C/C++ 风格的函数定义
 fn try_parse_function_c_style(lines: &[&str], start_idx: usize) -> Option<FunctionStats> {
     let line = lines[start_idx].trim();
-    
+
     // 检查是否包含括号
     if !line.contains('(') {
         return None;
     }
-    
+
     // 排除预处理指令
     if line.starts_with('#') {
         return None;
     }
-    
+
     // 排除以分号结尾的行（函数调用特征）
     // 函数定义不会以分号结尾（除非是纯声明，但我们不统计声明）
     if line.ends_with(';') {
         return None;
     }
-    
+
     // 排除控制语句
     let control_keywords = [
-        "if(", "if (", "while(", "while (", "for(", "for (",
-        "switch(", "switch (", "catch(", "catch (",
+        "if(", "if (", "while(", "while (", "for(", "for (", "switch(", "switch (", "catch(",
+        "catch (",
     ];
     for keyword in &control_keywords {
         if line.starts_with(keyword) {
             return None;
         }
     }
-    
+
     // 排除类/结构体/枚举定义
     let type_keywords = ["class ", "struct ", "enum ", "union ", "namespace "];
     for keyword in &type_keywords {
@@ -240,40 +331,40 @@ fn try_parse_function_c_style(lines: &[&str], start_idx: usize) -> Option<Functi
             return None;
         }
     }
-    
+
     // 排除函数调用模式
     if contains_function_call_pattern(line) {
         return None;
     }
-    
+
     // 查找左括号位置
     let paren_pos = line.find('(')?;
-    
+
     // 获取括号前的部分
     let before_paren = &line[..paren_pos];
-    
+
     // 分割成单词
     let words: Vec<&str> = before_paren
         .split_whitespace()
         .filter(|w| !w.is_empty())
         .collect();
-    
+
     if words.is_empty() {
         return None;
     }
-    
+
     // 最后一个词是函数名（可能带有指针符号）
     let last_word = words.last()?;
     let func_name = last_word
         .trim_start_matches('*')
         .trim_start_matches('&')
         .to_string();
-    
+
     // 验证函数名有效性
     if !is_valid_function_name(&func_name) {
         return None;
     }
-    
+
     // 检查是否有返回类型（至少需要一个词在函数名之前）
     // 特殊情况：构造函数、析构函数、类型转换运算符可能没有显式返回类型
     let has_return_type = if words.len() >= 2 {
@@ -285,20 +376,20 @@ fn try_parse_function_c_style(lines: &[&str], start_idx: usize) -> Option<Functi
         // 如: MyClass() 或 ~MyClass()
         func_name.starts_with('~') || func_name.chars().next()?.is_uppercase()
     };
-    
+
     // 如果没有返回类型且不是构造/析构函数，跳过
     if !has_return_type && words.len() < 2 {
         return None;
     }
-    
+
     // 计算参数数量
     let param_count = count_parameters_c_style(line);
-    
+
     // 查找函数体的开始和结束
     let (start_line, end_line) = find_function_body_range(lines, start_idx)?;
-    
+
     let lines_count = end_line - start_line + 1;
-    
+
     Some(FunctionStats {
         name: func_name,
         start_line: start_line + 1,
@@ -315,11 +406,11 @@ fn count_parameters_c_style(line: &str) -> usize {
         Some(pos) => pos + 1,
         None => return 0,
     };
-    
+
     let mut depth = 1;
     let mut end = start;
     let chars: Vec<char> = line.chars().collect();
-    
+
     for i in start..chars.len() {
         match chars[i] {
             '(' | '<' | '[' | '{' => depth += 1,
@@ -333,17 +424,17 @@ fn count_parameters_c_style(line: &str) -> usize {
             _ => {}
         }
     }
-    
+
     if start >= end {
         return 0;
     }
-    
+
     let params: String = chars[start..end].iter().collect();
-    
+
     if params.trim().is_empty() {
         return 0;
     }
-    
+
     // 计算参数数量（简化处理，不考虑模板参数中的逗号）
     params.split(',').filter(|s| !s.trim().is_empty()).count()
 }
@@ -354,13 +445,13 @@ fn find_function_body_range(lines: &[&str], start_idx: usize) -> Option<(usize, 
     let mut found_open_brace = false;
     let mut start_line = start_idx;
     let mut end_line = start_idx;
-    
+
     for i in start_idx..lines.len() {
         let line = lines[i];
         let mut in_string = false;
         let mut in_char = false;
         let mut in_line_comment = false;
-        
+
         for (j, c) in line.chars().enumerate() {
             // 处理注释
             if !in_string && !in_char {
@@ -375,7 +466,7 @@ fn find_function_body_range(lines: &[&str], start_idx: usize) -> Option<(usize, 
                     continue;
                 }
             }
-            
+
             // 处理字符串
             if c == '"' && !in_char {
                 // 检查是否被转义
@@ -385,7 +476,7 @@ fn find_function_body_range(lines: &[&str], start_idx: usize) -> Option<(usize, 
                 }
                 continue;
             }
-            
+
             // 处理字符
             if c == '\'' && !in_string {
                 let escaped = j > 0 && line.chars().nth(j - 1) == Some('\\');
@@ -394,11 +485,11 @@ fn find_function_body_range(lines: &[&str], start_idx: usize) -> Option<(usize, 
                 }
                 continue;
             }
-            
+
             if in_string || in_char {
                 continue;
             }
-            
+
             if c == '{' {
                 if !found_open_brace {
                     found_open_brace = true;
@@ -414,11 +505,11 @@ fn find_function_body_range(lines: &[&str], start_idx: usize) -> Option<(usize, 
             }
         }
     }
-    
+
     if !found_open_brace {
         return None;
     }
-    
+
     None
 }
 
@@ -431,49 +522,49 @@ fn extract_functions_java(source: &str) -> Vec<FunctionStats> {
 fn extract_functions_rust(source: &str) -> Vec<FunctionStats> {
     let mut functions = Vec::new();
     let lines: Vec<&str> = source.lines().collect();
-    
+
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i].trim();
-        
+
         if line.starts_with("fn ") || line.contains(" fn ") {
             if let Some(func) = try_parse_function_rust(&lines, i) {
                 functions.push(func);
             }
         }
-        
+
         i += 1;
     }
-    
+
     functions
 }
 
 /// 尝试解析 Rust 函数定义
 fn try_parse_function_rust(lines: &[&str], start_idx: usize) -> Option<FunctionStats> {
     let line = lines[start_idx].trim();
-    
+
     let fn_pos = line.find("fn ")?;
     let after_fn = &line[fn_pos + 3..];
-    
+
     let name_end = after_fn
         .find(|c| c == '(' || c == '<')
         .unwrap_or(after_fn.len());
-    
+
     let func_name = after_fn[..name_end]
         .trim()
         .trim_end_matches('<')
         .to_string();
-    
+
     if func_name.is_empty() {
         return None;
     }
-    
+
     let param_count = count_parameters_rust(line);
-    
+
     let (start_line, end_line) = find_function_body_range(lines, start_idx)?;
-    
+
     let lines_count = end_line - start_line + 1;
-    
+
     Some(FunctionStats {
         name: func_name,
         start_line: start_line + 1,
@@ -490,11 +581,11 @@ fn count_parameters_rust(line: &str) -> usize {
         Some(pos) => pos + 1,
         None => return 0,
     };
-    
+
     let mut depth = 1;
     let mut end = start;
     let chars: Vec<char> = line.chars().collect();
-    
+
     for i in start..chars.len() {
         match chars[i] {
             '(' => depth += 1,
@@ -508,17 +599,21 @@ fn count_parameters_rust(line: &str) -> usize {
             _ => {}
         }
     }
-    
+
     if start >= end {
         return 0;
     }
-    
+
     let params: String = chars[start..end].iter().collect();
-    
-    if params.trim().is_empty() || params.trim() == "self" || params.trim() == "&self" || params.trim() == "mut self" {
+
+    if params.trim().is_empty()
+        || params.trim() == "self"
+        || params.trim() == "&self"
+        || params.trim() == "mut self"
+    {
         return if params.trim().contains("self") { 1 } else { 0 };
     }
-    
+
     params.split(',').filter(|s| !s.trim().is_empty()).count()
 }
 
@@ -526,60 +621,62 @@ fn count_parameters_rust(line: &str) -> usize {
 fn extract_functions_go(source: &str) -> Vec<FunctionStats> {
     let mut functions = Vec::new();
     let lines: Vec<&str> = source.lines().collect();
-    
+
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i].trim();
-        
+
         if line.starts_with("func ") {
             if let Some(func) = try_parse_function_go(&lines, i) {
                 functions.push(func);
             }
         }
-        
+
         i += 1;
     }
-    
+
     functions
 }
 
 /// 尝试解析 Go 函数定义
 fn try_parse_function_go(lines: &[&str], start_idx: usize) -> Option<FunctionStats> {
     let line = lines[start_idx].trim();
-    
+
     let after_func = &line[5..];
-    
+
     let (func_name, param_count) = if after_func.starts_with('(') {
         let receiver_end = after_func.find(')')?;
         let after_receiver = &after_func[receiver_end + 1..].trim_start();
-        
+
         let name_end = after_receiver.find('(').unwrap_or(after_receiver.len());
         let name = after_receiver[..name_end].trim().to_string();
-        
-        let params = after_receiver.find('(').map(|pos| {
-            count_parameters_go(&after_receiver[pos..])
-        }).unwrap_or(0);
-        
+
+        let params = after_receiver
+            .find('(')
+            .map(|pos| count_parameters_go(&after_receiver[pos..]))
+            .unwrap_or(0);
+
         (name, params)
     } else {
         let name_end = after_func.find('(').unwrap_or(after_func.len());
         let name = after_func[..name_end].trim().to_string();
-        
-        let params = after_func.find('(').map(|pos| {
-            count_parameters_go(&after_func[pos..])
-        }).unwrap_or(0);
-        
+
+        let params = after_func
+            .find('(')
+            .map(|pos| count_parameters_go(&after_func[pos..]))
+            .unwrap_or(0);
+
         (name, params)
     };
-    
+
     if func_name.is_empty() {
         return None;
     }
-    
+
     let (start_line, end_line) = find_function_body_range(lines, start_idx)?;
-    
+
     let lines_count = end_line - start_line + 1;
-    
+
     Some(FunctionStats {
         name: func_name,
         start_line: start_line + 1,
@@ -596,11 +693,11 @@ fn count_parameters_go(line: &str) -> usize {
         Some(pos) => pos + 1,
         None => return 0,
     };
-    
+
     let mut depth = 1;
     let mut end = start;
     let chars: Vec<char> = line.chars().collect();
-    
+
     for i in start..chars.len() {
         match chars[i] {
             '(' | '[' => depth += 1,
@@ -614,17 +711,17 @@ fn count_parameters_go(line: &str) -> usize {
             _ => {}
         }
     }
-    
+
     if start >= end {
         return 0;
     }
-    
+
     let params: String = chars[start..end].iter().collect();
-    
+
     if params.trim().is_empty() {
         return 0;
     }
-    
+
     params.split(',').filter(|s| !s.trim().is_empty()).count()
 }
 
@@ -632,21 +729,21 @@ fn count_parameters_go(line: &str) -> usize {
 fn extract_functions_python(source: &str) -> Vec<FunctionStats> {
     let mut functions = Vec::new();
     let lines: Vec<&str> = source.lines().collect();
-    
+
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i];
-        
+
         let trimmed = line.trim();
         if trimmed.starts_with("def ") {
             if let Some(func) = try_parse_function_python(&lines, i) {
                 functions.push(func);
             }
         }
-        
+
         i += 1;
     }
-    
+
     functions
 }
 
@@ -654,23 +751,23 @@ fn extract_functions_python(source: &str) -> Vec<FunctionStats> {
 fn try_parse_function_python(lines: &[&str], start_idx: usize) -> Option<FunctionStats> {
     let line = lines[start_idx];
     let trimmed = line.trim();
-    
+
     let after_def = &trimmed[4..];
-    
+
     let name_end = after_def.find('(').unwrap_or(after_def.len());
     let func_name = after_def[..name_end].trim().to_string();
-    
+
     if func_name.is_empty() {
         return None;
     }
-    
+
     let param_count = count_parameters_python(trimmed);
-    
+
     let start_line = start_idx;
     let end_line = find_python_function_end(lines, start_idx);
-    
+
     let lines_count = end_line - start_line + 1;
-    
+
     Some(FunctionStats {
         name: func_name,
         start_line: start_line + 1,
@@ -687,23 +784,23 @@ fn count_parameters_python(line: &str) -> usize {
         Some(pos) => pos + 1,
         None => return 0,
     };
-    
+
     let end = match line.rfind(')') {
         Some(pos) => pos,
         None => return 0,
     };
-    
+
     if start >= end {
         return 0;
     }
-    
+
     let params = &line[start..end];
-    
+
     let params = params.trim();
     if params.is_empty() {
         return 0;
     }
-    
+
     let params = if params.starts_with("self") {
         let after_self = &params[4..].trim_start_matches(',');
         after_self.trim()
@@ -713,11 +810,11 @@ fn count_parameters_python(line: &str) -> usize {
     } else {
         params
     };
-    
+
     if params.is_empty() {
         return 0;
     }
-    
+
     params.split(',').filter(|s| !s.trim().is_empty()).count()
 }
 
@@ -727,35 +824,32 @@ fn find_python_function_end(lines: &[&str], start_idx: usize) -> usize {
         .chars()
         .take_while(|&c| c == ' ' || c == '\t')
         .count();
-    
+
     let mut end_line = start_idx;
-    
+
     for i in (start_idx + 1)..lines.len() {
         let line = lines[i];
-        
+
         if line.trim().is_empty() {
             continue;
         }
-        
-        let current_indent = line
-            .chars()
-            .take_while(|&c| c == ' ' || c == '\t')
-            .count();
-        
+
+        let current_indent = line.chars().take_while(|&c| c == ' ' || c == '\t').count();
+
         if current_indent <= func_indent {
             break;
         }
-        
+
         end_line = i;
     }
-    
+
     end_line
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_extract_c_function() {
         let code = r#"
@@ -773,7 +867,7 @@ int main() {
         assert_eq!(functions[0].parameter_count, 2);
         assert_eq!(functions[1].name, "main");
     }
-    
+
     #[test]
     fn test_exclude_function_calls() {
         let code = r#"
@@ -788,7 +882,7 @@ void process() {
         assert_eq!(functions.len(), 1);
         assert_eq!(functions[0].name, "process");
     }
-    
+
     #[test]
     fn test_exclude_control_statements() {
         let code = r#"
@@ -802,7 +896,7 @@ void test() {
         assert_eq!(functions.len(), 1);
         assert_eq!(functions[0].name, "test");
     }
-    
+
     #[test]
     fn test_constructor_destructor() {
         let code = r#"
@@ -818,7 +912,7 @@ MyClass::~MyClass() {
         assert_eq!(functions[0].name, "MyClass::MyClass");
         assert_eq!(functions[1].name, "MyClass::~MyClass");
     }
-    
+
     #[test]
     fn test_class_method() {
         let code = r#"
@@ -836,7 +930,7 @@ void MyClass::setValue(int v) {
         // 函数名包含类限定符
         assert_eq!(functions[1].name, "MyClass::setValue");
     }
-    
+
     #[test]
     fn test_exclude_lambda() {
         let code = r#"
@@ -849,7 +943,7 @@ void test() {
         assert_eq!(functions.len(), 1);
         assert_eq!(functions[0].name, "test");
     }
-    
+
     #[test]
     fn test_exclude_function_call_with_semicolon() {
         let code = r#"
@@ -864,7 +958,7 @@ void process() {
         assert_eq!(functions.len(), 1);
         assert_eq!(functions[0].name, "process");
     }
-    
+
     #[test]
     fn test_extract_rust_function() {
         let code = r#"
@@ -881,7 +975,7 @@ pub fn main() {
         assert_eq!(functions[0].name, "add");
         assert_eq!(functions[1].name, "main");
     }
-    
+
     #[test]
     fn test_extract_python_function() {
         let code = r#"
@@ -896,7 +990,7 @@ def greet(name):
         assert_eq!(functions[0].name, "add");
         assert_eq!(functions[1].name, "greet");
     }
-    
+
     #[test]
     fn test_extract_go_function() {
         let code = r#"
@@ -913,19 +1007,19 @@ func (r *Receiver) Method() {
         assert_eq!(functions[0].name, "add");
         assert_eq!(functions[1].name, "Method");
     }
-    
+
     #[test]
     fn test_is_valid_function_name() {
         assert!(is_valid_function_name("main"));
         assert!(is_valid_function_name("MyFunction"));
         assert!(is_valid_function_name("_private"));
         assert!(is_valid_function_name("~MyClass"));
-        assert!(!is_valid_function_name(""));  // 空
-        assert!(!is_valid_function_name("123abc"));  // 数字开头
-        assert!(!is_valid_function_name("if"));  // 关键字
-        assert!(!is_valid_function_name("while"));  // 关键字
+        assert!(!is_valid_function_name("")); // 空
+        assert!(!is_valid_function_name("123abc")); // 数字开头
+        assert!(!is_valid_function_name("if")); // 关键字
+        assert!(!is_valid_function_name("while")); // 关键字
     }
-    
+
     #[test]
     fn test_could_be_return_type() {
         assert!(could_be_return_type("int"));
