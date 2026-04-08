@@ -22,12 +22,15 @@ use std::{
 
 use crate::config::AppConfig;
 use crate::export::{ExportFormat, export_results};
+use crate::history::{compare_with_snapshot, create_snapshot, load_snapshot, save_snapshot};
 use crate::loc::{
     FileLoc, Language, LocSummary, read_file_content, scan_directory,
     scan_directory_with_complexity,
 };
 
-use super::state::{ComplexityDetailState, ScanProgress, ScanState, SortColumn, SortOrder, Theme};
+use super::state::{
+    ComplexityDetailState, NoticeLevel, ScanProgress, ScanState, SortColumn, SortOrder, Theme,
+};
 
 /// 文件预览窗口视图
 pub struct FilePreviewView {
@@ -298,6 +301,7 @@ pub struct LocToolView {
     results: Vec<FileLoc>,
     summary: LocSummary,
     error_message: Option<String>,
+    notice_level: NoticeLevel,
     sort_column: SortColumn,
     sort_order: SortOrder,
     selected_languages: Vec<Language>,
@@ -309,6 +313,96 @@ pub struct LocToolView {
 }
 
 impl LocToolView {
+    fn set_error_message(&mut self, message: impl Into<String>) {
+        self.error_message = Some(message.into());
+        self.notice_level = NoticeLevel::Error;
+    }
+
+    fn set_info_message(&mut self, message: impl Into<String>) {
+        self.error_message = Some(message.into());
+        self.notice_level = NoticeLevel::Info;
+    }
+
+    fn resolve_export_target(path: PathBuf) -> (PathBuf, ExportFormat) {
+        if path.is_dir() {
+            let filename = format!(
+                "loc_report_{}.csv",
+                chrono::Local::now().format("%Y%m%d_%H%M%S")
+            );
+            return (path.join(filename), ExportFormat::Csv);
+        }
+
+        match path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_lowercase())
+            .as_deref()
+        {
+            Some("csv") => (path, ExportFormat::Csv),
+            Some("json") => (path, ExportFormat::Json),
+            Some("html") => (path, ExportFormat::Html),
+            _ => (path.with_extension("csv"), ExportFormat::Csv),
+        }
+    }
+
+    fn resolve_snapshot_target(path: PathBuf) -> PathBuf {
+        if path.is_dir() {
+            let filename = format!(
+                "loc_snapshot_{}.json",
+                chrono::Local::now().format("%Y%m%d_%H%M%S")
+            );
+            return path.join(filename);
+        }
+
+        match path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_lowercase())
+            .as_deref()
+        {
+            Some("json") => path,
+            _ => path.with_extension("json"),
+        }
+    }
+
+    fn save_dialog_directory(&self) -> PathBuf {
+        if let Some(selected_path) = &self.selected_path {
+            if selected_path.is_dir() {
+                return selected_path.clone();
+            }
+            if let Some(parent) = selected_path.parent() {
+                return parent.to_path_buf();
+            }
+        }
+
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    }
+
+    fn project_name(&self) -> String {
+        self.selected_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "loc_report".to_string())
+    }
+
+    fn snapshot_name(&self) -> String {
+        format!(
+            "loc_snapshot_{}_{}.json",
+            self.project_name(),
+            chrono::Local::now().format("%Y%m%d_%H%M%S")
+        )
+    }
+
+    fn export_name(&self) -> String {
+        format!(
+            "loc_report_{}_{}.csv",
+            self.project_name(),
+            chrono::Local::now().format("%Y%m%d_%H%M%S")
+        )
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let config = match AppConfig::load() {
             Ok(config) => config,
@@ -358,6 +452,7 @@ impl LocToolView {
             results: Vec::new(),
             summary: LocSummary::default(),
             error_message: None,
+            notice_level: NoticeLevel::Info,
             sort_column: SortColumn::Path,
             sort_order: SortOrder::Asc,
             selected_languages: config.get_selected_languages(),
@@ -399,7 +494,7 @@ impl LocToolView {
 
     fn scan(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(path) = self.selected_path.clone() else {
-            self.error_message = Some("请先选择目录".into());
+            self.set_error_message("请先选择目录");
             cx.notify();
             return;
         };
@@ -411,13 +506,14 @@ impl LocToolView {
             .trim()
             .is_empty();
         if self.selected_languages.is_empty() && !has_custom_extensions {
-            self.error_message = Some("请至少选择一种语言或填写自定义后缀".into());
+            self.set_error_message("请至少选择一种语言或填写自定义后缀");
             cx.notify();
             return;
         }
 
         self.scan_state = ScanState::Scanning;
         self.error_message = None;
+        self.notice_level = NoticeLevel::Info;
         self.results.clear();
         self.summary = LocSummary::default();
         self.scan_progress = ScanProgress {
@@ -546,7 +642,7 @@ impl LocToolView {
                             view.scan_state = ScanState::Done;
                         }
                         Err(e) => {
-                            view.error_message = Some(format!("扫描失败: {}", e));
+                            view.set_error_message(format!("扫描失败: {}", e));
                             view.scan_state = ScanState::Error;
                         }
                     }
@@ -559,48 +655,131 @@ impl LocToolView {
     }
 
     fn export(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let options = gpui::PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("选择导出文件路径（自动根据扩展名选择格式）".into()),
-        };
-
-        let receiver = cx.prompt_for_paths(options);
+        let directory = self.save_dialog_directory();
+        let suggested_name = self.export_name();
+        let receiver = cx.prompt_for_new_path(&directory, Some(&suggested_name));
         let summary = self.summary.clone();
         let files = self.results.clone();
 
         cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = receiver.await {
-                if let Some(path) = paths.into_iter().next() {
-                    let format = match path.extension().and_then(|ext| ext.to_str()) {
-                        Some("csv") => ExportFormat::Csv,
-                        Some("json") => ExportFormat::Json,
-                        Some("html") => ExportFormat::Html,
-                        _ => ExportFormat::Csv,
-                    };
+            if let Ok(Ok(Some(path))) = receiver.await {
+                let (export_path, format) = Self::resolve_export_target(path);
 
-                    match export_results(&path, format, &summary, &files) {
-                        Ok(_) => {
-                            cx.update(|cx| {
-                                this.update(cx, |view, cx| {
-                                    view.error_message = Some(format!("成功导出到: {:?}", path));
-                                    cx.notify();
-                                })
+                match export_results(&export_path, format, &summary, &files) {
+                    Ok(_) => {
+                        cx.update(|cx| {
+                            this.update(cx, |view, cx| {
+                                view.set_info_message(format!("成功导出到: {:?}", export_path));
+                                cx.notify();
                             })
-                            .ok();
-                        }
-                        Err(e) => {
-                            cx.update(|cx| {
-                                this.update(cx, |view, cx| {
-                                    view.error_message = Some(format!("导出失败: {}", e));
-                                    cx.notify();
-                                })
+                        })
+                        .ok();
+                    }
+                    Err(e) => {
+                        cx.update(|cx| {
+                            this.update(cx, |view, cx| {
+                                view.set_error_message(format!("导出失败: {}", e));
+                                cx.notify();
                             })
-                            .ok();
-                        }
+                        })
+                        .ok();
                     }
                 }
+            }
+        })
+        .detach();
+    }
+
+    fn save_snapshot_action(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.results.is_empty() {
+            self.set_error_message("暂无扫描结果，无法保存快照");
+            cx.notify();
+            return;
+        }
+
+        let directory = self.save_dialog_directory();
+        let suggested_name = self.snapshot_name();
+        let receiver = cx.prompt_for_new_path(&directory, Some(&suggested_name));
+        let root = self.selected_path.clone();
+        let summary = self.summary.clone();
+        let files = self.results.clone();
+
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(path))) = receiver.await {
+                let snapshot_path = Self::resolve_snapshot_target(path);
+                let snapshot = create_snapshot(root.as_deref(), &summary, &files);
+                let result = save_snapshot(&snapshot_path, &snapshot);
+
+                cx.update(|cx| {
+                    this.update(cx, |view, cx| {
+                        match result {
+                            Ok(_) => {
+                                view.set_info_message(format!("快照已保存: {:?}", snapshot_path));
+                            }
+                            Err(e) => {
+                                view.set_error_message(format!("保存快照失败: {}", e));
+                            }
+                        }
+                        cx.notify();
+                    })
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn compare_snapshot_action(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.results.is_empty() {
+            self.set_error_message("暂无扫描结果，无法进行快照对比");
+            cx.notify();
+            return;
+        }
+
+        let options = gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("选择要对比的历史快照（.json）".into()),
+        };
+
+        let receiver = cx.prompt_for_paths(options);
+        let root = self.selected_path.clone();
+        let summary = self.summary.clone();
+        let files = self.results.clone();
+
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await
+                && let Some(path) = paths.into_iter().next()
+            {
+                let result = (|| -> anyhow::Result<String> {
+                    let baseline = load_snapshot(&path)?;
+                    let comparison =
+                        compare_with_snapshot(root.as_deref(), &summary, &files, &baseline);
+                    Ok(format!(
+                        "对比完成（基线 {}）：新增 {}，删除 {}，变更 {}，未变更 {}；总行 {:+}（代码 {:+} / 注释 {:+} / 空白 {:+}）",
+                        baseline.created_at,
+                        comparison.added_files,
+                        comparison.removed_files,
+                        comparison.changed_files,
+                        comparison.unchanged_files,
+                        comparison.total_delta,
+                        comparison.code_delta,
+                        comparison.comments_delta,
+                        comparison.blanks_delta
+                    ))
+                })();
+
+                cx.update(|cx| {
+                    this.update(cx, |view, cx| {
+                        match result {
+                            Ok(message) => view.set_info_message(message),
+                            Err(e) => view.set_error_message(format!("快照对比失败: {}", e)),
+                        }
+                        cx.notify();
+                    })
+                })
+                .ok();
             }
         })
         .detach();
@@ -887,13 +1066,33 @@ impl LocToolView {
                     .child(self.render_stat_card("总行数", self.summary.total(), theme.primary, cx))
                     .child(
                         div().ml_auto().child(
-                            Button::new("export")
-                                .label("导出结果")
-                                .primary()
-                                .disabled(self.results.is_empty())
-                                .on_click(cx.listener(|view, _, window, cx| {
-                                    view.export(window, cx);
-                                })),
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("save-snapshot")
+                                        .label("保存快照")
+                                        .disabled(self.results.is_empty())
+                                        .on_click(cx.listener(|view, _, window, cx| {
+                                            view.save_snapshot_action(window, cx);
+                                        })),
+                                )
+                                .child(
+                                    Button::new("compare-snapshot")
+                                        .label("历史对比")
+                                        .disabled(self.results.is_empty())
+                                        .on_click(cx.listener(|view, _, window, cx| {
+                                            view.compare_snapshot_action(window, cx);
+                                        })),
+                                )
+                                .child(
+                                    Button::new("export")
+                                        .label("导出结果")
+                                        .primary()
+                                        .disabled(self.results.is_empty())
+                                        .on_click(cx.listener(|view, _, window, cx| {
+                                            view.export(window, cx);
+                                        })),
+                                ),
                         ),
                     ),
             )
@@ -1507,14 +1706,19 @@ impl LocToolView {
         let theme = cx.theme();
 
         if let Some(ref msg) = self.error_message {
+            let (bg, border, text) = match self.notice_level {
+                NoticeLevel::Info => (theme.info.opacity(0.12), theme.info, theme.info),
+                NoticeLevel::Error => (theme.danger.opacity(0.1), theme.danger, theme.danger),
+            };
+
             div()
                 .p_3()
                 .m_4()
                 .rounded(theme.radius)
-                .bg(theme.danger.opacity(0.1))
+                .bg(bg)
                 .border_1()
-                .border_color(theme.danger)
-                .text_color(theme.danger)
+                .border_color(border)
+                .text_color(text)
                 .child(msg.clone())
         } else {
             div()
@@ -1660,7 +1864,7 @@ impl LocToolView {
                 }
                 Err(e) => {
                     let _ = this.update(cx, |view, cx| {
-                        view.error_message = Some(format!("无法读取文件: {}", e));
+                        view.set_error_message(format!("无法读取文件: {}", e));
                         cx.notify();
                     });
                 }

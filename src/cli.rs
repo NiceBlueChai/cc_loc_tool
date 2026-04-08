@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::export::{ExportFormat, export_results};
+use crate::history::{compare_with_snapshot, create_snapshot, load_snapshot, save_snapshot};
 use crate::loc::{Language, LocSummary, scan_directory_simple, scan_directory_with_complexity};
 
 /// CLI 配置选项
@@ -15,6 +16,8 @@ pub struct CliOptions {
     pub custom_extensions: Vec<String>,
     pub export_path: Option<PathBuf>,
     pub export_format: Option<ExportFormat>,
+    pub save_snapshot_path: Option<PathBuf>,
+    pub compare_with_path: Option<PathBuf>,
     /// 是否启用复杂度分析
     pub analyze_complexity: bool,
 }
@@ -29,6 +32,8 @@ impl Default for CliOptions {
             custom_extensions: Vec::new(),
             export_path: None,
             export_format: None,
+            save_snapshot_path: None,
+            compare_with_path: None,
             analyze_complexity: false,
         }
     }
@@ -126,6 +131,20 @@ pub fn parse_args() -> Result<CliOptions> {
                     anyhow::bail!("--format 选项需要一个格式参数");
                 }
             }
+            "--save-snapshot" => {
+                if let Some(path) = args.next() {
+                    options.save_snapshot_path = Some(PathBuf::from(path));
+                } else {
+                    anyhow::bail!("--save-snapshot 选项需要一个文件路径参数");
+                }
+            }
+            "--compare-with" => {
+                if let Some(path) = args.next() {
+                    options.compare_with_path = Some(PathBuf::from(path));
+                } else {
+                    anyhow::bail!("--compare-with 选项需要一个快照路径参数");
+                }
+            }
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -174,6 +193,8 @@ fn print_help() {
     println!("                               支持的语言: C, C++, Java, Python, Go, Rust");
     println!("  -x, --extensions EXTS        自定义扫描后缀（如: tpp,ipp,cu）");
     println!("  -c, --complexity            启用代码复杂度分析");
+    println!("      --save-snapshot PATH    将当前扫描结果保存为快照（JSON）");
+    println!("      --compare-with PATH     与指定快照进行对比并输出差异摘要");
     println!("  -o, --output PATH            导出结果的文件路径");
     println!("  -t, --format FORMAT          导出格式: csv, json, html");
     println!("  -h, --help                   显示帮助信息");
@@ -184,6 +205,8 @@ fn print_help() {
     println!("  cc_loc_cli -d ./my_project -e build,target -l C++,Java");
     println!("  cc_loc_cli ./my_project -x tpp,ipp,cu");
     println!("  cc_loc_cli ./my_project -o results.json -t json");
+    println!("  cc_loc_cli ./my_project --save-snapshot snap_v1.json");
+    println!("  cc_loc_cli ./my_project --compare-with snap_v1.json");
     println!("  cc_loc_cli ./my_project -c -o complexity.html");
 }
 
@@ -211,10 +234,12 @@ pub fn run_cli() -> Result<()> {
             "禁用"
         }
     );
+    println!("快照保存路径: {:?}", options.save_snapshot_path);
+    println!("对比快照路径: {:?}", options.compare_with_path);
     println!();
 
     // 转换排除目录为 HashSet
-    let exclude_dirs: HashSet<String> = options.exclude_dirs.into_iter().collect();
+    let exclude_dirs: HashSet<String> = options.exclude_dirs.iter().cloned().collect();
 
     let results;
     let summary: LocSummary;
@@ -240,6 +265,28 @@ pub fn run_cli() -> Result<()> {
             &options.custom_extensions,
         )?;
         summary = LocSummary::from_files(&results);
+    }
+
+    if let Some(compare_path) = &options.compare_with_path {
+        let baseline = load_snapshot(compare_path)?;
+        let comparison =
+            compare_with_snapshot(Some(&options.directory), &summary, &results, &baseline);
+
+        println!();
+        println!("=== 历史对比结果 ===");
+        println!("基线快照: {:?}", compare_path);
+        println!("快照时间: {}", baseline.created_at);
+        println!("新增文件: {}", comparison.added_files);
+        println!("删除文件: {}", comparison.removed_files);
+        println!("变更文件: {}", comparison.changed_files);
+        println!("未变更文件: {}", comparison.unchanged_files);
+        println!(
+            "行数变化: 总计 {:+}, 代码 {:+}, 注释 {:+}, 空白 {:+}",
+            comparison.total_delta,
+            comparison.code_delta,
+            comparison.comments_delta,
+            comparison.blanks_delta
+        );
     }
 
     // 打印结果
@@ -274,6 +321,12 @@ pub fn run_cli() -> Result<()> {
 
         export_results(&export_path, format, &summary, &results)?;
         println!("导出成功!");
+    }
+
+    if let Some(snapshot_path) = options.save_snapshot_path {
+        let snapshot = create_snapshot(Some(&options.directory), &summary, &results);
+        save_snapshot(&snapshot_path, &snapshot)?;
+        println!("已保存快照到: {:?}", snapshot_path);
     }
 
     Ok(())

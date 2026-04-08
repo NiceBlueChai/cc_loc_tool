@@ -47,3 +47,10 @@ pub enum Theme {
     Light,
     Dark,
 }
+
+/// 页面消息级别
+#[derive(Clone, Copy, PartialEq)]
+pub enum NoticeLevel {
+    Info,
+    Error,
+}
