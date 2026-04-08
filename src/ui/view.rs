@@ -10,6 +10,7 @@ use gpui_component::{
     input::{Input, InputState},
     scroll::ScrollableElement,
     theme::ActiveTheme,
+    theme::{Theme as UiTheme, ThemeMode},
     v_flex,
 };
 use std::{
@@ -316,6 +317,12 @@ impl LocToolView {
             }
         };
 
+        let initial_mode = match config.theme {
+            Theme::Light => ThemeMode::Light,
+            Theme::Dark => ThemeMode::Dark,
+        };
+        UiTheme::change(initial_mode, Some(window), cx);
+
         let exclude_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(config.exclude_dirs_to_string())
@@ -569,6 +576,9 @@ impl LocToolView {
 
     fn render_header(&self, _window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let is_scanning = self.scan_state == ScanState::Scanning;
+        let primary_text = self.primary_text_color(cx);
+        let secondary_text = self.secondary_text_color(cx);
+        let elevated_surface = self.elevated_surface_color(cx);
         let path_display = self
             .selected_path
             .as_ref()
@@ -580,6 +590,7 @@ impl LocToolView {
             .p_4()
             .border_b_1()
             .border_color(cx.theme().border)
+            .text_color(primary_text)
             .child(
                 h_flex()
                     .gap_3()
@@ -587,7 +598,7 @@ impl LocToolView {
                     .child(
                         div()
                             .text_sm()
-                            .text_color(cx.theme().muted_foreground)
+                            .text_color(secondary_text)
                             .w(px(80.0))
                             .min_w(px(80.0))
                             .child("项目目录"),
@@ -600,11 +611,11 @@ impl LocToolView {
                             .rounded(cx.theme().radius)
                             .border_1()
                             .border_color(cx.theme().border)
-                            .bg(cx.theme().background)
+                            .bg(elevated_surface)
                             .text_color(if self.selected_path.is_some() {
-                                cx.theme().foreground
+                                primary_text
                             } else {
-                                cx.theme().muted_foreground
+                                secondary_text
                             })
                             .child(path_display),
                     )
@@ -636,8 +647,8 @@ impl LocToolView {
                                 Theme::Light => "深色",
                                 Theme::Dark => "浅色",
                             })
-                            .on_click(cx.listener(|view, _, _window, cx| {
-                                view.toggle_theme(cx);
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                view.toggle_theme(window, cx);
                             })),
                     ),
             )
@@ -648,7 +659,7 @@ impl LocToolView {
                     .child(
                         div()
                             .text_sm()
-                            .text_color(cx.theme().muted_foreground)
+                            .text_color(secondary_text)
                             .w(px(80.0))
                             .min_w(px(80.0))
                             .child("选择语言"),
@@ -713,7 +724,7 @@ impl LocToolView {
                     .child(
                         div()
                             .text_sm()
-                            .text_color(cx.theme().muted_foreground)
+                            .text_color(secondary_text)
                             .w(px(80.0))
                             .min_w(px(80.0))
                             .child("排除目录"),
@@ -727,7 +738,7 @@ impl LocToolView {
                     .child(
                         div()
                             .text_sm()
-                            .text_color(cx.theme().muted_foreground)
+                            .text_color(secondary_text)
                             .w(px(80.0))
                             .min_w(px(80.0))
                             .child("排除文件"),
@@ -736,7 +747,7 @@ impl LocToolView {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(cx.theme().muted_foreground)
+                            .text_color(secondary_text)
                             .child("(支持 * 通配符)"),
                     ),
             )
@@ -748,7 +759,7 @@ impl LocToolView {
                     .child(
                         div()
                             .text_sm()
-                            .text_color(cx.theme().muted_foreground)
+                            .text_color(secondary_text)
                             .w(px(80.0))
                             .min_w(px(80.0))
                             .child("复杂度分析"),
@@ -774,7 +785,7 @@ impl LocToolView {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(cx.theme().muted_foreground)
+                            .text_color(secondary_text)
                             .child("(启用可能增加扫描时间)"),
                     ),
             )
@@ -782,11 +793,16 @@ impl LocToolView {
 
     fn render_summary(&self, _window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let surface = self.surface_color(cx);
+        let elevated_surface = self.elevated_surface_color(cx);
+        let primary_text = self.primary_text_color(cx);
+        let secondary_text = self.secondary_text_color(cx);
 
         let content = v_flex()
             .gap_4()
             .p_4()
-            .bg(theme.muted)
+            .bg(surface)
+            .text_color(primary_text)
             .child(
                 h_flex()
                     .gap_4()
@@ -831,7 +847,7 @@ impl LocToolView {
                             div()
                                 .text_sm()
                                 .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(theme.muted_foreground)
+                                .text_color(secondary_text)
                                 .child("复杂度分析"),
                         )
                         .child(self.render_stat_card_f64(
@@ -879,7 +895,7 @@ impl LocToolView {
             content.child(
                 div()
                     .p_4()
-                    .bg(theme.background)
+                    .bg(elevated_surface)
                     .rounded(theme.radius)
                     .border_1()
                     .border_color(theme.border)
@@ -898,19 +914,21 @@ impl LocToolView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme();
+        let elevated_surface = self.elevated_surface_color(cx);
+        let secondary_text = self.secondary_text_color(cx);
 
         v_flex()
             .gap_1()
             .p_3()
             .rounded(theme.radius)
-            .bg(theme.background)
+            .bg(elevated_surface)
             .border_1()
             .border_color(theme.border)
             .min_w(px(100.0))
             .child(
                 div()
                     .text_sm()
-                    .text_color(theme.muted_foreground)
+                    .text_color(secondary_text)
                     .child(label.to_string()),
             )
             .child(
@@ -930,19 +948,21 @@ impl LocToolView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme();
+        let elevated_surface = self.elevated_surface_color(cx);
+        let secondary_text = self.secondary_text_color(cx);
 
         v_flex()
             .gap_1()
             .p_3()
             .rounded(theme.radius)
-            .bg(theme.background)
+            .bg(elevated_surface)
             .border_1()
             .border_color(theme.border)
             .min_w(px(100.0))
             .child(
                 div()
                     .text_sm()
-                    .text_color(theme.muted_foreground)
+                    .text_color(secondary_text)
                     .child(label.to_string()),
             )
             .child(
@@ -956,6 +976,7 @@ impl LocToolView {
 
     fn render_chart(&self, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let primary_text = self.primary_text_color(cx);
         let total = self.summary.total() as f64;
 
         if total == 0.0 {
@@ -979,7 +1000,7 @@ impl LocToolView {
                 div()
                     .text_sm()
                     .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(theme.foreground)
+                    .text_color(primary_text)
                     .child("代码构成比例"),
             )
             .child(
@@ -1025,7 +1046,7 @@ impl LocToolView {
                                     .rounded(px(2.0))
                                     .bg(theme.success),
                             )
-                            .child(div().text_sm().text_color(theme.foreground).child(format!(
+                            .child(div().text_sm().text_color(primary_text).child(format!(
                                 "代码行: {} ({:.1}%)",
                                 self.summary.code, code_percent
                             ))),
@@ -1041,7 +1062,7 @@ impl LocToolView {
                                     .rounded(px(2.0))
                                     .bg(theme.warning),
                             )
-                            .child(div().text_sm().text_color(theme.foreground).child(format!(
+                            .child(div().text_sm().text_color(primary_text).child(format!(
                                 "注释行: {} ({:.1}%)",
                                 self.summary.comments, comments_percent
                             ))),
@@ -1057,7 +1078,7 @@ impl LocToolView {
                                     .rounded(px(2.0))
                                     .bg(theme.muted_foreground),
                             )
-                            .child(div().text_sm().text_color(theme.foreground).child(format!(
+                            .child(div().text_sm().text_color(primary_text).child(format!(
                                 "空白行: {} ({:.1}%)",
                                 self.summary.blanks, blanks_percent
                             ))),
@@ -1079,11 +1100,17 @@ impl LocToolView {
         cx.notify();
     }
 
-    fn toggle_theme(&mut self, cx: &mut Context<Self>) {
+    fn toggle_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.theme = match self.theme {
             Theme::Light => Theme::Dark,
             Theme::Dark => Theme::Light,
         };
+
+        let mode = match self.theme {
+            Theme::Light => ThemeMode::Light,
+            Theme::Dark => ThemeMode::Dark,
+        };
+        UiTheme::change(mode, Some(window), cx);
 
         self.config.theme = self.theme;
         if let Err(e) = self.config.save() {
@@ -1091,6 +1118,32 @@ impl LocToolView {
         }
 
         cx.notify();
+    }
+
+    fn app_background_color(&self, cx: &Context<Self>) -> gpui::Hsla {
+        match self.theme {
+            Theme::Light => cx.theme().background,
+            Theme::Dark => cx.theme().muted,
+        }
+    }
+
+    fn surface_color(&self, cx: &Context<Self>) -> gpui::Hsla {
+        match self.theme {
+            Theme::Light => cx.theme().muted,
+            Theme::Dark => cx.theme().background,
+        }
+    }
+
+    fn elevated_surface_color(&self, cx: &Context<Self>) -> gpui::Hsla {
+        cx.theme().background
+    }
+
+    fn primary_text_color(&self, cx: &Context<Self>) -> gpui::Hsla {
+        cx.theme().foreground
+    }
+
+    fn secondary_text_color(&self, cx: &Context<Self>) -> gpui::Hsla {
+        cx.theme().muted_foreground
     }
 
     fn sort_results(&mut self) {
@@ -1170,6 +1223,7 @@ impl LocToolView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_active = self.sort_column == column;
+        let primary_text = self.primary_text_color(cx);
         let indicator = if is_active {
             match self.sort_order {
                 SortOrder::Asc => "↑",
@@ -1196,7 +1250,7 @@ impl LocToolView {
                     .text_color(if is_active {
                         cx.theme().primary
                     } else {
-                        cx.theme().foreground
+                        primary_text
                     })
                     .child(label),
             )
@@ -1220,15 +1274,19 @@ impl LocToolView {
 
     fn render_results(&self, _window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let surface = self.surface_color(cx);
+        let elevated_surface = self.elevated_surface_color(cx);
+        let primary_text = self.primary_text_color(cx);
 
         v_flex()
             .p_4()
             .gap_2()
+            .text_color(primary_text)
             .child(
                 h_flex()
                     .gap_2()
                     .p_2()
-                    .bg(theme.muted)
+                    .bg(surface)
                     .rounded_t(theme.radius)
                     .flex_shrink_0()
                     .child(self.render_header_cell("文件路径", SortColumn::Path, None, cx))
@@ -1254,12 +1312,13 @@ impl LocToolView {
                     .border_1()
                     .border_color(theme.border)
                     .rounded_b(theme.radius)
+                    .bg(elevated_surface)
                     .child(
                         v_flex().children(self.results.iter().enumerate().map(|(i, file)| {
                             let bg = if i % 2 == 0 {
-                                theme.background
+                                elevated_surface
                             } else {
-                                theme.muted.opacity(0.3)
+                                surface
                             };
 
                             let path_str = file
@@ -1310,7 +1369,7 @@ impl LocToolView {
                                 }),
                             );
 
-                            row = row.bg(bg);
+                            row = row.bg(bg).text_color(primary_text);
 
                             // 文件路径
                             row.child(div().flex_1().text_sm().overflow_x_hidden().child(path_str))
@@ -1400,21 +1459,16 @@ impl LocToolView {
     }
 
     fn render_empty_state(&self, _window: &Window, cx: &Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
+        let secondary_text = self.secondary_text_color(cx);
 
         div().flex_1().flex().items_center().justify_center().child(
             v_flex()
                 .gap_2()
                 .items_center()
+                .child(div().text_xl().text_color(secondary_text).child("📂"))
                 .child(
                     div()
-                        .text_xl()
-                        .text_color(theme.muted_foreground)
-                        .child("📂"),
-                )
-                .child(
-                    div()
-                        .text_color(theme.muted_foreground)
+                        .text_color(secondary_text)
                         .child("选择一个项目目录开始扫描"),
                 ),
         )
@@ -1422,6 +1476,8 @@ impl LocToolView {
 
     fn render_progress(&self, _window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let secondary_text = self.secondary_text_color(cx);
+        let surface = self.surface_color(cx);
         let progress = if self.scan_progress.total_files > 0 {
             (self.scan_progress.processed_files as f32 / self.scan_progress.total_files as f32)
                 * 100.0
@@ -1438,16 +1494,12 @@ impl LocToolView {
                 v_flex()
                     .gap_4()
                     .items_center()
-                    .child(
-                        div()
-                            .text_color(theme.muted_foreground)
-                            .child("⏳ 正在扫描..."),
-                    )
+                    .child(div().text_color(secondary_text).child("⏳ 正在扫描..."))
                     .child(
                         div()
                             .w(px(300.0))
                             .h(px(8.0))
-                            .bg(theme.muted)
+                            .bg(surface)
                             .rounded_full()
                             .overflow_hidden()
                             .child(
@@ -1458,15 +1510,10 @@ impl LocToolView {
                                     .rounded_full(),
                             ),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(format!(
-                                "{}/{} 文件",
-                                self.scan_progress.processed_files, self.scan_progress.total_files
-                            )),
-                    ),
+                    .child(div().text_sm().text_color(secondary_text).child(format!(
+                        "{}/{} 文件",
+                        self.scan_progress.processed_files, self.scan_progress.total_files
+                    ))),
             )
     }
 
@@ -1565,12 +1612,8 @@ impl Render for LocToolView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_results = !self.results.is_empty();
         let is_scanning = self.scan_state == ScanState::Scanning;
-        let theme = cx.theme();
-
-        let (bg_color, text_color) = match self.theme {
-            Theme::Light => (theme.background, theme.foreground),
-            Theme::Dark => (theme.primary, theme.background),
-        };
+        let bg_color = self.app_background_color(cx);
+        let text_color = self.primary_text_color(cx);
 
         v_flex()
             .size_full()
