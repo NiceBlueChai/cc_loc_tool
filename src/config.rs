@@ -140,7 +140,7 @@ impl AppConfig {
     /// 将字符串解析为排除目录集合
     pub fn exclude_dirs_from_string(&mut self, s: &str) {
         self.exclude_dirs = s
-            .split(|c| c == ',' || c == ';')
+            .split([',', ';'])
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
@@ -148,17 +148,13 @@ impl AppConfig {
 
     /// 将排除文件转换为字符串（用于UI显示）
     pub fn exclude_files_to_string(&self) -> String {
-        self.exclude_files
-            .iter()
-            .cloned()
-            .collect::<Vec<String>>()
-            .join(", ")
+        self.exclude_files.to_vec().join(", ")
     }
 
     /// 将字符串解析为排除文件列表
     pub fn exclude_files_from_string(&mut self, s: &str) {
         self.exclude_files = s
-            .split(|c| c == ',' || c == ';')
+            .split([',', ';'])
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
@@ -172,9 +168,35 @@ impl AppConfig {
     /// 将字符串解析为自定义扩展名列表
     pub fn custom_extensions_from_string(&mut self, s: &str) {
         self.custom_extensions = s
-            .split(|c| c == ',' || c == ';')
+            .split([',', ';'])
             .map(|v| v.trim().trim_start_matches('.').to_lowercase())
             .filter(|v| !v.is_empty())
             .collect();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_extensions_are_normalized_from_string() {
+        let mut config = AppConfig::default();
+        config.custom_extensions_from_string(" .Tpp, ipp; .CU ,, ");
+
+        assert_eq!(
+            config.custom_extensions,
+            vec!["tpp".to_string(), "ipp".to_string(), "cu".to_string()]
+        );
+        assert_eq!(config.custom_extensions_to_string(), "tpp, ipp, cu");
+    }
+
+    #[test]
+    fn empty_selected_languages_defaults_to_all_supported_languages() {
+        let mut config = AppConfig::default();
+        config.selected_languages.clear();
+
+        let langs = config.get_selected_languages();
+        assert_eq!(langs.len(), Language::all().len());
     }
 }

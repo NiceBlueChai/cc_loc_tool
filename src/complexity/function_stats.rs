@@ -1,3 +1,9 @@
+#![allow(
+    clippy::collapsible_if,
+    clippy::needless_range_loop,
+    unused_assignments
+)]
+
 use serde::Serialize;
 
 use crate::language::Language;
@@ -546,9 +552,7 @@ fn try_parse_function_rust(lines: &[&str], start_idx: usize) -> Option<FunctionS
     let fn_pos = line.find("fn ")?;
     let after_fn = &line[fn_pos + 3..];
 
-    let name_end = after_fn
-        .find(|c| c == '(' || c == '<')
-        .unwrap_or(after_fn.len());
+    let name_end = after_fn.find(['(', '<']).unwrap_or(after_fn.len());
 
     let func_name = after_fn[..name_end]
         .trim()
@@ -801,12 +805,10 @@ fn count_parameters_python(line: &str) -> usize {
         return 0;
     }
 
-    let params = if params.starts_with("self") {
-        let after_self = &params[4..].trim_start_matches(',');
-        after_self.trim()
-    } else if params.starts_with("cls") {
-        let after_cls = &params[3..].trim_start_matches(',');
-        after_cls.trim()
+    let params = if let Some(stripped) = params.strip_prefix("self") {
+        stripped.trim_start_matches(',').trim()
+    } else if let Some(stripped) = params.strip_prefix("cls") {
+        stripped.trim_start_matches(',').trim()
     } else {
         params
     };

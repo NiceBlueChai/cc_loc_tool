@@ -15,7 +15,7 @@ use gpui_component::{
 };
 use std::{
     collections::HashSet,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, mpsc},
     time::Duration,
 };
@@ -40,7 +40,7 @@ pub struct FilePreviewView {
 
 impl FilePreviewView {
     pub fn new(
-        file_path: &PathBuf,
+        file_path: &Path,
         content: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -55,12 +55,12 @@ impl FilePreviewView {
         });
 
         Self {
-            file_path: file_path.clone(),
+            file_path: file_path.to_path_buf(),
             editor,
         }
     }
 
-    fn detect_language(path: &PathBuf) -> String {
+    fn detect_language(path: &Path) -> String {
         match path.extension().and_then(|ext| ext.to_str()) {
             Some("c") => "c",
             Some("cpp") | Some("cc") | Some("cxx") | Some("hpp") | Some("h") => "cpp",
@@ -126,13 +126,13 @@ pub struct ComplexityDetailView {
 
 impl ComplexityDetailView {
     pub fn new(
-        file_path: &PathBuf,
+        file_path: &Path,
         complexity: crate::complexity::FileComplexity,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Self {
         Self {
-            file_path: file_path.clone(),
+            file_path: file_path.to_path_buf(),
             complexity,
         }
     }
@@ -307,6 +307,7 @@ pub struct LocToolView {
     selected_languages: Vec<Language>,
     config: AppConfig,
     theme: Theme,
+    #[allow(dead_code)]
     complexity_detail_state: ComplexityDetailState,
     /// 是否启用复杂度分析
     analyze_complexity: bool,
@@ -474,19 +475,19 @@ impl LocToolView {
         let receiver = cx.prompt_for_paths(options);
 
         cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = receiver.await {
-                if let Some(path) = paths.into_iter().next() {
-                    cx.update(|cx| {
-                        this.update(cx, |view, _cx| {
-                            view.selected_path = Some(path.clone());
-                            view.config.last_selected_path = Some(path);
-                            if let Err(e) = view.config.save() {
-                                eprintln!("保存配置失败: {}", e);
-                            }
-                        })
+            if let Ok(Ok(Some(paths))) = receiver.await
+                && let Some(path) = paths.into_iter().next()
+            {
+                cx.update(|cx| {
+                    this.update(cx, |view, _cx| {
+                        view.selected_path = Some(path.clone());
+                        view.config.last_selected_path = Some(path);
+                        if let Err(e) = view.config.save() {
+                            eprintln!("保存配置失败: {}", e);
+                        }
                     })
-                    .ok();
-                }
+                })
+                .ok();
             }
         })
         .detach();
@@ -526,7 +527,7 @@ impl LocToolView {
 
         let exclude_value = self.exclude_input.read(cx).value().to_string();
         let exclude_dirs: HashSet<String> = exclude_value
-            .split(|c| c == ',' || c == ';')
+            .split([',', ';'])
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
@@ -534,7 +535,7 @@ impl LocToolView {
 
         let exclude_files_value = self.exclude_files_input.read(cx).value().to_string();
         let exclude_files: Vec<String> = exclude_files_value
-            .split(|c| c == ',' || c == ';')
+            .split([',', ';'])
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
@@ -542,7 +543,7 @@ impl LocToolView {
 
         let custom_extensions_value = self.custom_extensions_input.read(cx).value().to_string();
         let custom_extensions: Vec<String> = custom_extensions_value
-            .split(|c| c == ',' || c == ';')
+            .split([',', ';'])
             .map(|s| s.trim().trim_start_matches('.').to_lowercase())
             .filter(|s| !s.is_empty())
             .collect();
@@ -1586,7 +1587,7 @@ impl LocToolView {
                             let path_str = file
                                 .path
                                 .strip_prefix(
-                                    self.selected_path.as_ref().unwrap_or(&PathBuf::new()),
+                                    self.selected_path.as_deref().unwrap_or(Path::new("")),
                                 )
                                 .unwrap_or(&file.path)
                                 .to_string_lossy()
@@ -1798,15 +1799,15 @@ impl LocToolView {
     }
 
     /// 显示文件复杂度详情弹窗
-    fn show_complexity_detail(&mut self, file_path: &PathBuf, cx: &mut Context<Self>) {
+    fn show_complexity_detail(&mut self, file_path: &Path, cx: &mut Context<Self>) {
         // 查找该文件的复杂度信息
-        let file_loc = self.results.iter().find(|f| &f.path == file_path);
+        let file_loc = self.results.iter().find(|f| f.path == file_path);
         let complexity = match file_loc.and_then(|f| f.complexity.as_ref()) {
             Some(c) => c.clone(),
             None => return,
         };
 
-        let file_path_clone = file_path.clone();
+        let file_path_clone = file_path.to_path_buf();
 
         // 打开新窗口显示复杂度详情
         let bounds = gpui::Bounds::centered(None, gpui::size(gpui::px(700.0), gpui::px(500.0)), cx);
@@ -1835,8 +1836,8 @@ impl LocToolView {
         );
     }
 
-    fn load_file_content(&mut self, file_path: &PathBuf, cx: &mut Context<Self>) {
-        let file_path_clone = file_path.clone();
+    fn load_file_content(&mut self, file_path: &Path, cx: &mut Context<Self>) {
+        let file_path_clone = file_path.to_path_buf();
 
         cx.spawn(async move |this, cx| {
             let result = read_file_content(&file_path_clone);

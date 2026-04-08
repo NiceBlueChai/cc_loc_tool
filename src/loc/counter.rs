@@ -50,8 +50,10 @@ impl LocSummary {
     }
 
     pub fn from_files(files: &[FileLoc]) -> Self {
-        let mut summary = Self::default();
-        summary.files = files.len();
+        let mut summary = Self {
+            files: files.len(),
+            ..Self::default()
+        };
         for f in files {
             summary.code += f.code;
             summary.comments += f.comments;
@@ -62,8 +64,10 @@ impl LocSummary {
 
     /// 从文件列表计算汇总，包含复杂度统计
     pub fn from_files_with_complexity(files: &[FileLoc]) -> Self {
-        let mut summary = Self::default();
-        summary.files = files.len();
+        let mut summary = Self {
+            files: files.len(),
+            ..Self::default()
+        };
         let mut total_function_lines = 0usize;
         for f in files {
             summary.code += f.code;
@@ -289,7 +293,7 @@ pub fn count_file_with_complexity(path: &std::path::Path) -> Result<FileLoc> {
     let content = read_file_content(path)?;
     let (code, comments, blanks) = count_lines_by_language(&content, language);
 
-    let complexity = analyze_file_complexity(&content, &path.to_path_buf(), language);
+    let complexity = analyze_file_complexity(&content, path, language);
 
     Ok(FileLoc {
         path: path.to_path_buf(),

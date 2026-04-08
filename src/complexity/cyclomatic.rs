@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 use serde::Serialize;
 
 use crate::language::Language;
@@ -138,7 +140,6 @@ fn count_decision_points_c_style(chars: &[char], pos: usize, language: Language)
     let c = chars[pos];
 
     // 检查是否是标识符的开始
-    let is_ident_start = |ch: char| ch.is_alphabetic() || ch == '_';
     let is_ident_char = |ch: char| ch.is_alphanumeric() || ch == '_';
 
     // 检查前面的字符是否是标识符字符或空白
@@ -253,7 +254,6 @@ fn count_decision_points_python(chars: &[char], pos: usize) -> usize {
     let len = chars.len();
     let c = chars[pos];
 
-    let is_ident_start = |ch: char| ch.is_alphabetic() || ch == '_';
     let is_ident_char = |ch: char| ch.is_alphanumeric() || ch == '_';
 
     let prev_is_ident_or_space = |offset: usize| {

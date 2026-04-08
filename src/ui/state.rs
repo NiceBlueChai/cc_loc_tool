@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// 复杂度详情弹窗状态
+#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub struct ComplexityDetailState {
     /// 当前展开详情查看的文件路径

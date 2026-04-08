@@ -41,8 +41,17 @@ impl Default for CliOptions {
 
 /// 解析命令行参数
 pub fn parse_args() -> Result<CliOptions> {
+    parse_args_from(std::env::args().skip(1))
+}
+
+/// 从指定参数迭代器解析命令行参数，便于测试
+pub fn parse_args_from<I, S>(args: I) -> Result<CliOptions>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
     let mut options = CliOptions::default();
-    let mut args = std::env::args().skip(1);
+    let mut args = args.into_iter().map(Into::into).peekable();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -56,7 +65,7 @@ pub fn parse_args() -> Result<CliOptions> {
             "-e" | "--exclude-dirs" => {
                 if let Some(exclude) = args.next() {
                     options.exclude_dirs = exclude
-                        .split(|c| c == ',' || c == ';')
+                        .split([',', ';'])
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())
                         .collect();
@@ -67,7 +76,7 @@ pub fn parse_args() -> Result<CliOptions> {
             "-f" | "--exclude-files" => {
                 if let Some(exclude) = args.next() {
                     options.exclude_files = exclude
-                        .split(|c| c == ',' || c == ';')
+                        .split([',', ';'])
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())
                         .collect();
@@ -78,7 +87,7 @@ pub fn parse_args() -> Result<CliOptions> {
             "-l" | "--languages" => {
                 if let Some(langs) = args.next() {
                     options.languages = langs
-                        .split(|c| c == ',' || c == ';')
+                        .split([',', ';'])
                         .filter_map(|s| {
                             let s = s.trim().to_lowercase();
                             Language::all()
@@ -101,7 +110,7 @@ pub fn parse_args() -> Result<CliOptions> {
             "-x" | "--extensions" => {
                 if let Some(exts) = args.next() {
                     options.custom_extensions = exts
-                        .split(|c| c == ',' || c == ';')
+                        .split([',', ';'])
                         .map(|s| s.trim().trim_start_matches('.').to_lowercase())
                         .filter(|s| !s.is_empty())
                         .collect();
@@ -239,7 +248,7 @@ pub fn run_cli() -> Result<()> {
     println!();
 
     // 转换排除目录为 HashSet
-    let exclude_dirs: HashSet<String> = options.exclude_dirs.iter().cloned().collect();
+    let exclude_dirs: HashSet<String> = options.exclude_dirs.into_iter().collect();
 
     let results;
     let summary: LocSummary;
@@ -297,16 +306,16 @@ pub fn run_cli() -> Result<()> {
     println!("总行数: {}", summary.total());
 
     // 如果启用了复杂度分析，打印复杂度统计
-    if options.analyze_complexity {
-        if let Some(ref c) = summary.complexity {
-            println!();
-            println!("=== 复杂度分析 ===");
-            println!("平均圈复杂度: {:.1}", c.avg_cyclomatic);
-            println!("函数总数: {}", c.total_functions);
-            println!("高复杂度函数(>10): {}", c.high_complexity_functions);
-            println!("长函数(>50行): {}", c.long_functions);
-            println!("平均函数长度: {:.1}", c.avg_function_length);
-        }
+    if options.analyze_complexity
+        && let Some(ref c) = summary.complexity
+    {
+        println!();
+        println!("=== 复杂度分析 ===");
+        println!("平均圈复杂度: {:.1}", c.avg_cyclomatic);
+        println!("函数总数: {}", c.total_functions);
+        println!("高复杂度函数(>10): {}", c.high_complexity_functions);
+        println!("长函数(>50行): {}", c.long_functions);
+        println!("平均函数长度: {:.1}", c.avg_function_length);
     }
     println!();
 
@@ -330,4 +339,64 @@ pub fn run_cli() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn make_temp_dir() -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("cc_loc_tool_cli_test_{}", timestamp));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn parse_args_supports_snapshot_and_extension_flags() {
+        let root = make_temp_dir();
+        let args = vec![
+            "-d".to_string(),
+            root.to_string_lossy().to_string(),
+            "-e".to_string(),
+            "build,target".to_string(),
+            "-f".to_string(),
+            "moc_*,*.generated.cpp".to_string(),
+            "-l".to_string(),
+            "C++,Python".to_string(),
+            "-x".to_string(),
+            "tpp,ipp,.cu".to_string(),
+            "--save-snapshot".to_string(),
+            "snap.json".to_string(),
+            "--compare-with".to_string(),
+            "base.json".to_string(),
+            "-c".to_string(),
+        ];
+
+        let options = parse_args_from(args).unwrap();
+        assert_eq!(options.directory, root);
+        assert_eq!(
+            options.exclude_dirs,
+            vec!["build".to_string(), "target".to_string()]
+        );
+        assert_eq!(
+            options.exclude_files,
+            vec!["moc_*".to_string(), "*.generated.cpp".to_string()]
+        );
+        assert_eq!(options.languages, vec![Language::Cpp, Language::Python]);
+        assert_eq!(
+            options.custom_extensions,
+            vec!["tpp".to_string(), "ipp".to_string(), "cu".to_string()]
+        );
+        assert_eq!(options.save_snapshot_path, Some(PathBuf::from("snap.json")));
+        assert_eq!(options.compare_with_path, Some(PathBuf::from("base.json")));
+        assert!(options.analyze_complexity);
+
+        let _ = fs::remove_dir_all(root);
+    }
 }
