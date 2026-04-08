@@ -1,7 +1,11 @@
 use anyhow::Result;
 use encoding_rs::{GBK, UTF_8};
 use serde::Serialize;
-use std::{fs, path::PathBuf};
+use std::{
+    fs::{self, File},
+    io::{self, BufRead, BufReader},
+    path::PathBuf,
+};
 
 use crate::complexity::{ComplexitySummary, FileComplexity, analyze_file_complexity};
 use crate::language::Language;
@@ -98,77 +102,118 @@ impl LocSummary {
     }
 }
 
-fn count_lines_by_language(content: &str, language: Language) -> (usize, usize, usize) {
-    let mut code = 0usize;
-    let mut comments = 0usize;
-    let mut blanks = 0usize;
-    let mut in_block_comment = false;
-    let mut in_python_multiline_comment = false;
-    let mut python_multiline_delimiter = "";
+#[derive(Default)]
+struct LineCounter {
+    code: usize,
+    comments: usize,
+    blanks: usize,
+    in_block_comment: bool,
+    in_python_multiline_comment: bool,
+    python_multiline_delimiter: &'static str,
+}
 
-    for line in content.lines() {
+impl LineCounter {
+    fn process_line(&mut self, line: &str, language: Language) {
         let trimmed = line.trim();
 
         if trimmed.is_empty() {
-            blanks += 1;
-            continue;
+            self.blanks += 1;
+            return;
         }
 
         if language == Language::Python {
-            if in_python_multiline_comment {
-                comments += 1;
-                if trimmed.ends_with(python_multiline_delimiter) {
-                    in_python_multiline_comment = false;
-                    python_multiline_delimiter = "";
+            if self.in_python_multiline_comment {
+                self.comments += 1;
+                if trimmed.ends_with(self.python_multiline_delimiter) {
+                    self.in_python_multiline_comment = false;
+                    self.python_multiline_delimiter = "";
                 }
-                continue;
+                return;
             }
 
             if let Some(delimiter) = python_multiline_delimiter_for_line(trimmed) {
-                comments += 1;
+                self.comments += 1;
                 if !trimmed.ends_with(delimiter) || trimmed == delimiter {
-                    in_python_multiline_comment = true;
-                    python_multiline_delimiter = delimiter;
+                    self.in_python_multiline_comment = true;
+                    self.python_multiline_delimiter = delimiter;
                 }
-                continue;
+                return;
             }
         }
 
-        if in_block_comment {
-            comments += 1;
+        if self.in_block_comment {
+            self.comments += 1;
             if trimmed.contains("*/") {
-                in_block_comment = false;
+                self.in_block_comment = false;
             }
-            continue;
+            return;
         }
 
         match language {
             Language::Python => {
                 if trimmed.starts_with('#') {
-                    comments += 1;
+                    self.comments += 1;
                 } else {
-                    code += 1;
+                    self.code += 1;
                 }
             }
             _ => {
                 if trimmed.starts_with("//") {
-                    comments += 1;
+                    self.comments += 1;
                 } else if trimmed.starts_with("/*") {
-                    comments += 1;
+                    self.comments += 1;
                     if !trimmed.contains("*/") {
-                        in_block_comment = true;
+                        self.in_block_comment = true;
                     }
                 } else {
-                    code += 1;
+                    self.code += 1;
                     if trimmed.contains("/*") && !trimmed.contains("*/") {
-                        in_block_comment = true;
+                        self.in_block_comment = true;
                     }
                 }
             }
         }
     }
 
-    (code, comments, blanks)
+    fn finish(self) -> (usize, usize, usize) {
+        (self.code, self.comments, self.blanks)
+    }
+}
+
+fn count_lines_by_language(content: &str, language: Language) -> (usize, usize, usize) {
+    let mut counter = LineCounter::default();
+    for line in content.lines() {
+        counter.process_line(line, language);
+    }
+    counter.finish()
+}
+
+fn count_lines_from_utf8_reader<R: BufRead>(
+    reader: R,
+    language: Language,
+) -> io::Result<(usize, usize, usize)> {
+    let mut counter = LineCounter::default();
+    let mut line = String::new();
+    let mut reader = reader;
+
+    loop {
+        line.clear();
+        let bytes = reader.read_line(&mut line)?;
+        if bytes == 0 {
+            break;
+        }
+
+        if line.ends_with('\n') {
+            line.pop();
+            if line.ends_with('\r') {
+                line.pop();
+            }
+        }
+
+        counter.process_line(&line, language);
+    }
+
+    Ok(counter.finish())
 }
 
 fn python_multiline_delimiter_for_line(trimmed: &str) -> Option<&'static str> {
@@ -206,9 +251,18 @@ pub fn read_file_content(path: &std::path::Path) -> Result<String> {
 
 /// Count lines in a single file
 pub fn count_file(path: &std::path::Path) -> Result<FileLoc> {
-    let content = read_file_content(path)?;
     let language = detect_language(path).unwrap_or(Language::Cpp); // Default to C++ if unknown
-    let (code, comments, blanks) = count_lines_by_language(&content, language);
+    let (code, comments, blanks) = match File::open(path)
+        .map(BufReader::new)
+        .and_then(|reader| count_lines_from_utf8_reader(reader, language))
+    {
+        Ok(counts) => counts,
+        Err(err) if err.kind() == io::ErrorKind::InvalidData => {
+            let content = read_file_content(path)?;
+            count_lines_by_language(&content, language)
+        }
+        Err(err) => return Err(err.into()),
+    };
 
     Ok(FileLoc {
         path: path.to_path_buf(),
@@ -221,18 +275,21 @@ pub fn count_file(path: &std::path::Path) -> Result<FileLoc> {
 
 /// Count lines and analyze complexity in a single file
 pub fn count_file_with_complexity(path: &std::path::Path) -> Result<FileLoc> {
-    let content = read_file_content(path)?;
     let language = detect_language(path).unwrap_or(Language::Cpp);
+    let file_size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+
+    if file_size > LARGE_FILE_THRESHOLD {
+        let file_loc = count_file(path)?;
+        return Ok(FileLoc {
+            complexity: None,
+            ..file_loc
+        });
+    }
+
+    let content = read_file_content(path)?;
     let (code, comments, blanks) = count_lines_by_language(&content, language);
 
-    // 分析复杂度（对于大文件跳过以节省内存）
-    let file_size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    let complexity = if file_size > LARGE_FILE_THRESHOLD {
-        // 大文件跳过复杂度分析
-        None
-    } else {
-        analyze_file_complexity(&content, &path.to_path_buf(), language)
-    };
+    let complexity = analyze_file_complexity(&content, &path.to_path_buf(), language);
 
     Ok(FileLoc {
         path: path.to_path_buf(),
@@ -247,6 +304,7 @@ pub fn count_file_with_complexity(path: &std::path::Path) -> Result<FileLoc> {
 mod tests {
     use super::*;
     use crate::complexity::{FileComplexity, FunctionStats};
+    use std::io::Cursor;
 
     #[test]
     fn python_triple_double_quotes_are_counted_as_comments() {
@@ -305,5 +363,16 @@ print("hello")
             summary.complexity.as_ref().map(|c| c.avg_function_length),
             Some(4.5)
         );
+    }
+
+    #[test]
+    fn utf8_reader_counts_lines_without_loading_whole_string() {
+        let content = "int main() {\n    return 0;\n}\n";
+        let cursor = Cursor::new(content.as_bytes());
+
+        let (code, comments, blanks) =
+            count_lines_from_utf8_reader(BufReader::new(cursor), Language::Cpp).unwrap();
+
+        assert_eq!((code, comments, blanks), (3, 0, 0));
     }
 }
