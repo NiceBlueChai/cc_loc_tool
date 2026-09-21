@@ -250,12 +250,9 @@ pub fn run_cli() -> Result<()> {
     // 转换排除目录为 HashSet
     let exclude_dirs: HashSet<String> = options.exclude_dirs.into_iter().collect();
 
-    let results;
-    let summary: LocSummary;
-
-    if options.analyze_complexity {
+    let (results, summary) = if options.analyze_complexity {
         // 使用带复杂度分析的扫描
-        results = scan_directory_with_complexity(
+        let results = scan_directory_with_complexity(
             &options.directory,
             &exclude_dirs,
             &options.exclude_files,
@@ -263,18 +260,20 @@ pub fn run_cli() -> Result<()> {
             &options.custom_extensions,
             None,
         )?;
-        summary = LocSummary::from_files_with_complexity(&results);
+        let summary = LocSummary::from_files_with_complexity(&results);
+        (results, summary)
     } else {
         // 使用简单扫描
-        results = scan_directory_simple(
+        let results = scan_directory_simple(
             &options.directory,
             &exclude_dirs,
             &options.exclude_files,
             &options.languages,
             &options.custom_extensions,
         )?;
-        summary = LocSummary::from_files(&results);
-    }
+        let summary = LocSummary::from_files(&results);
+        (results, summary)
+    };
 
     if let Some(compare_path) = &options.compare_with_path {
         let baseline = load_snapshot(compare_path)?;

@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
@@ -12,7 +12,12 @@ use walkdir::WalkDir;
 use super::counter::{FileLoc, count_file, count_file_with_complexity};
 use crate::language::{Language, is_supported_file_with_custom};
 
-type ProgressCallback = dyn Fn(usize, usize) + Sync;
+/// 扫描进度回调，收到 `(已处理文件数, 文件总数)`。
+///
+/// 返回 `false` 表示请求取消：并行 worker 会在后续文件前陆续停下，
+/// 函数返回已统计的部分结果。部分结果不代表完整统计，调用方需要自行区分；
+/// 被取消的扫描也不会写入结果缓存。
+type ProgressCallback = dyn Fn(usize, usize) -> bool + Sync;
 const MAX_CACHE_ENTRIES: usize = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -305,11 +310,16 @@ fn scan_directory_internal(
     }
 
     let processed = AtomicUsize::new(0);
+    let cancelled = AtomicBool::new(false);
 
     // 并行处理所有文件
     let results: Vec<FileLoc> = files
         .par_iter() // 并行迭代器
         .filter_map(|path| {
+            if cancelled.load(Ordering::Relaxed) {
+                return None;
+            }
+
             let result = match if analyze_complexity {
                 count_file_with_complexity(path)
             } else {
@@ -324,14 +334,20 @@ fn scan_directory_internal(
 
             if let Some(callback) = progress_callback {
                 let current = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                callback(current, total_files);
+                if !callback(current, total_files) {
+                    cancelled.store(true, Ordering::Relaxed);
+                }
             }
 
             result
         })
         .collect(); // 收集结果
 
-    // 报告100%进度
+    // 取消时结果不完整，既不报告完成也不写入缓存
+    if cancelled.load(Ordering::Relaxed) {
+        return Ok(results);
+    }
+
     if let Some(callback) = progress_callback {
         callback(total_files, total_files);
     }
@@ -468,6 +484,56 @@ mod tests {
         assert_eq!(third.len(), 1);
         assert_eq!(third[0].code, 4);
         assert_eq!(cache_hits_for_tests(), 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cancelled_scan_leaves_no_cache_entry() {
+        reset_cache_for_tests();
+
+        let root = make_temp_dir();
+        fs::write(root.join("main.cpp"), "int main() {\n    return 0;\n}\n").unwrap();
+
+        let exclude_dirs = HashSet::new();
+        let exclude_files: Vec<String> = Vec::new();
+        let languages = vec![Language::Cpp];
+        let custom_extensions: Vec<String> = Vec::new();
+
+        let cancel = |_: usize, _: usize| false;
+        let cancelled = scan_directory(
+            &root,
+            &exclude_dirs,
+            &exclude_files,
+            &languages,
+            &custom_extensions,
+            Some(&cancel),
+        )
+        .unwrap();
+        assert_eq!(cancelled.len(), 1);
+
+        // 缓存是全局的、测试并发跑，所以直接查这个 root 的键有没有落库，
+        // 而不是数全局命中次数。
+        let cache_key = build_cache_key(
+            &root,
+            &exclude_dirs,
+            &exclude_files,
+            &languages,
+            &custom_extensions,
+            false,
+        );
+        assert!(!cache_store().lock().unwrap().contains_key(&cache_key));
+
+        let full = scan_directory_simple(
+            &root,
+            &exclude_dirs,
+            &exclude_files,
+            &languages,
+            &custom_extensions,
+        )
+        .unwrap();
+        assert_eq!(full.len(), 1);
+        assert_eq!(full[0].code, 3);
 
         let _ = fs::remove_dir_all(root);
     }

@@ -130,8 +130,11 @@ impl AppConfig {
 
     /// 将排除目录转换为字符串（用于UI显示）
     pub fn exclude_dirs_to_string(&self) -> String {
-        self.exclude_dirs
-            .iter()
+        // 集合本身无序，直接拼接会随哈希种子每次启动换个顺序，看起来像设置被改了；
+        // 排序后输出才稳定。
+        let mut dirs: Vec<&String> = self.exclude_dirs.iter().collect();
+        dirs.sort();
+        dirs.into_iter()
             .cloned()
             .collect::<Vec<String>>()
             .join(", ")
