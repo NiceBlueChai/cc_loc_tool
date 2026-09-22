@@ -172,6 +172,11 @@ fn collect_files(
         .follow_links(false)
         .into_iter()
         .filter_entry(|e| {
+            // walkdir 的 filter_entry 对根条目（depth 0）也生效，必须先放行：
+            // 否则 `-d .` / `-d ..` 或点开头的目录作为扫描根时整棵树都会被剪掉
+            if e.depth() == 0 {
+                return true;
+            }
             let name = e.file_name().to_string_lossy();
             // Skip hidden directories
             if name.starts_with('.') {

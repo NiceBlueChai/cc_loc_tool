@@ -86,9 +86,14 @@
 git clone <项目地址>
 cd cc_loc_tool
 
-# 编译并运行
-cargo run
+# 编译并运行 GUI
+cargo run --bin cc_loc_tool
+
+# 编译并运行命令行版
+cargo run --bin cc_loc_cli -- ./my_project
 ```
+
+> 本包有两个可执行目标，`cargo run` 不带 `--bin` 会报「could not determine which binary to run」。
 
 ## 使用说明
 
@@ -145,16 +150,26 @@ cc_loc_cli -d ./my_project -x tpp,ipp,cu
 # 导出结果到文件
 cc_loc_cli -d ./my_project -o results.csv -t csv
 
+# 附带复杂度分析
+cc_loc_cli -d ./my_project -c
+
+# 保存快照 / 与历史快照对比
+cc_loc_cli -d ./my_project --save-snapshot snap_v1.json
+cc_loc_cli -d ./my_project --compare-with snap_v1.json
+
 # 查看帮助信息
 cc_loc_cli --help
 ```
 
 **命令行选项：**
-- `-d, --directory`：要扫描的目录路径
+- `-d, --directory`：要扫描的目录路径（也可直接作为位置参数给出）
 - `-e, --exclude-dirs`：要排除的目录列表，用逗号或分号分隔
 - `-f, --exclude-files`：要排除的文件模式，用逗号或分号分隔
 - `-l, --languages`：要扫描的编程语言，用逗号或分号分隔（支持：C, C++, Java, Python, Go, Rust）
 - `-x, --extensions`：自定义扫描后缀，用逗号或分号分隔（可带或不带 `.`，如 `tpp,ipp,cu`）
+- `-c, --complexity`：启用代码复杂度分析
+- `--save-snapshot PATH`：把本次扫描结果存成 JSON 快照
+- `--compare-with PATH`：与指定快照对比，输出差异摘要
 - `-o, --output`：导出结果的文件路径
 - `-t, --format`：导出格式（csv, json, html）
 - `-h, --help`：显示帮助信息
@@ -162,14 +177,21 @@ cc_loc_cli --help
 
 ## 默认排除项
 
+以下是新配置（首次运行、或配置文件里没有这两项时）的默认值，可以在界面上直接改，改动即时写回配置文件。
+
 ### 目录
-- `build`, `target`, `node_modules`, `.git`
-- `cmake-build-debug`, `cmake-build-release`
-- `GeneratedFiles`, `QtAwesome`, `grpc`, `Dependentlibs`
+- `node_modules`
+- `.git`
+- `target`
 
 ### 文件
-- `moc_*`, `ui_*`, `qrc_*`, `pch*`
-- `*.generated.cpp`, `qcustomplot.*`
+- `*.generated.*`
+- `moc_*`
+- `qrc_*`
+
+另外无需配置就会排除的：**名字以 `.` 开头的条目一律跳过**，目录和文件都跳（所以 `.gitignore`、`.clang-format` 这类文件不会被统计）。扫描根目录本身不受这条限制，`-d .`、`-d ..` 或直接指定点开头的目录都能正常扫描。
+
+匹配规则有个不对称要注意：排除目录是按**目录名**精确匹配（区分大小写，只匹配名字不含路径）；排除文件是按**文件名**做通配符匹配（`*`，大小写不敏感，同样不含路径）。
 
 ## 项目结构
 
@@ -203,6 +225,8 @@ cc_loc_tool/
 │       ├── state.rs         # 界面状态与主题
 │       └── windows.rs       # 多窗口管理
 ├── assets/screenshot.png    # 界面截图
+├── .github/workflows/ci.yml # fmt / test / clippy 三条门禁
+├── AGENTS.md                # 贡献者与 AI 代理的仓库约束
 ├── Cargo.toml               # 项目配置和依赖
 └── Cargo.lock               # 依赖版本锁定
 ```
@@ -211,27 +235,29 @@ cc_loc_tool/
 
 ### 代码行统计算法
 
-1. **文件编码检测**：优先尝试 UTF-8 编码，失败则回退到 GBK 编码
-2. **行类型识别**：
-   - 空白行：仅包含空格或制表符的行
-   - 注释行：以 `//` 开头或在 `/* */` 块内的行
-   - 代码行：除上述两种类型外的行
-3. **块注释处理**：正确处理跨多行的 `/* */` 注释
+1. **文件编码检测**：先按 UTF-8 流式逐行读；解码报错才回退，把整个文件读出来按 UTF-8 宽松解码、仍失败则按 GBK 解码
+2. **行类型识别**（按语言分支）：
+   - 空白行：`trim()` 后为空的行
+   - C 系（C/C++/Java/Go/Rust）：`//` 开头算注释，`/*` 开头或行内含 `/*` 进入块注释
+   - Python：`#` 开头算注释，`"""` / `'''` 包裹的行按多行注释处理
+   - 代码行：以上都不是
+3. **块注释处理**：跨多行的 `/* */`、以及 Python 的三引号块都能正确连续计数
 
 ### 目录扫描算法
 
 1. **递归遍历**：使用 walkdir 库递归遍历目录
 2. **文件过滤**：
-   - 基于文件扩展名识别 C/C++ 文件
-   - 排除隐藏目录（以 . 开头）
-   - 应用用户指定的排除规则
-3. **并发优化**：在后台线程执行扫描，不阻塞 UI
+   - 按已选语言的扩展名匹配（外加自定义后缀），大小写不敏感
+   - 跳过名字以 `.` 开头的条目（目录和文件都跳）
+   - 应用用户指定的排除目录 / 排除文件规则
+3. **并发优化**：rayon 并行统计单文件，GUI 侧在后台线程扫描，不阻塞界面
 
 ## 性能特点
 
-- **高效扫描**：使用 Rust 语言的高性能特性，快速处理大量文件
-- **内存友好**：逐行读取文件内容，避免一次性加载大文件
-- **UI 响应**：扫描过程中 UI 保持响应状态
+- **并行扫描**：文件级 rayon 并行，配合进程内结果缓存（同一目录配置未变时复用，最多 8 条）
+- **内存友好**：普通统计走 BufReader 逐行流式，不把整文件读进内存；只有非 UTF-8 文件和开复杂度分析时才整体读入
+- **大文件保护**：开启复杂度分析时，超过 1 MiB 的文件退回逐行统计并跳过复杂度（避免为算复杂度而吃下大文件）
+- **UI 响应**：扫描过程中界面保持响应，可随时取消
 
 ## 下一步计划
 
